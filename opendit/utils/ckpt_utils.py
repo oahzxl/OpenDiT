@@ -122,7 +122,7 @@ def create_logger(logging_dir):
     """
     if dist.get_rank() == 0:  # real logger
         logging.basicConfig(
-            level=logging.INFO,
+            level=logging.CRITICAL,
             format="[\033[34m%(asctime)s\033[0m] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
             handlers=[logging.StreamHandler(), logging.FileHandler(f"{logging_dir}/log.txt")],

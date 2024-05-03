@@ -125,7 +125,7 @@ class T5Embedder:
                 )
             tokenizer_path = cache_dir
 
-        print(f"\nModel path: {path}, tokenizer path: {tokenizer_path}\n\n", end="")
+        # print(f"\nModel path: {path}, tokenizer path: {tokenizer_path}\n\n", end="")
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
         self.model = T5EncoderModel.from_pretrained(path, **t5_model_kwargs).eval()
         self.model_max_length = model_max_length

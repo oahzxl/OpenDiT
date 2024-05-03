@@ -1,24 +1,25 @@
 BATCH_SIZE=1
-LR=2e-5
-DATA_PATH="./videos/demo.csv"
-MODEL_PRETRAINED_PATH="./pretrained/OpenSora-v1-HQ-16x512x512.pth"
+WARMUP=10
+RUNTIME=10
+NUM_FRAMES=16
+H=512
+W=512
+SP="dsp"
+SP_SIZE=2
 
-torchrun --standalone --nproc_per_node=2 scripts/opensora/bench_opensora.py \
+mkdir -p log
+
+torchrun --standalone --nproc_per_node=8 scripts/opensora/bench_opensora.py \
     --batch_size $BATCH_SIZE \
     --mixed_precision bf16 \
-    --lr $LR \
     --grad_checkpoint \
-    --data_path $DATA_PATH \
-    --model_pretrained_path $MODEL_PRETRAINED_PATH
-
-# recommend
-# torchrun --standalone --nproc_per_node=8 scripts/opensora/train_opensora.py \
-#     --batch_size $BATCH_SIZE \
-#     --mixed_precision bf16 \
-#     --lr $LR \
-#     --grad_checkpoint \
-#     --data_path $DATA_PATH \
-#     --enable_flashattn \
-#     --enable_layernorm_kernel \
-#     --text_speedup \
-#     --model_pretrained_path $MODEL_PRETRAINED_PATH
+    --data_path "./videos/demo.csv" \
+    --text_speedup \
+    --enable_flashattn \
+    --enable_layernorm_kernel \
+    --warmup $WARMUP \
+    --runtime $RUNTIME \
+    --num_frames $NUM_FRAMES \
+    --image_size $H $W \
+    --sp $SP \
+    --sequence_parallel_size $SP_SIZE | tee log/BATCHSIZE${BATCH_SIZE}_NUMFRAMES${NUM_FRAMES}_H${H}_W${W}_SPSIZE${SP_SIZE}_METHOD${SP}.log

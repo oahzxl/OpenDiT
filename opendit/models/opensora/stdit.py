@@ -278,6 +278,8 @@ class STDiT(nn.Module):
 
         # embedding
         x = self.x_embedder(x)  # (B, N, D)
+        assert x.requires_grad == True, "Input x must require gradient"
+
         x = rearrange(x, "b (t s) d -> b t s d", t=self.num_temporal, s=self.num_spatial)
         x = x + self.pos_embed
         x = rearrange(x, "b t s d -> b (t s) d")

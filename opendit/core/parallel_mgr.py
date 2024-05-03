@@ -6,7 +6,7 @@ PARALLEL_MANAGER = None
 
 
 class ParallelManager(ProcessGroupMesh):
-    def __init__(self, dp_size, sp_size, dp_axis, sp_axis):
+    def __init__(self, dp_size, sp_size, dp_axis, sp_axis, method):
         super().__init__(dp_size, sp_size)
         self.dp_axis = dp_axis
         self.dp_group: ProcessGroup = self.get_group_along_axis(self.dp_axis)
@@ -18,10 +18,13 @@ class ParallelManager(ProcessGroupMesh):
         self.sp_rank = dist.get_rank(self.sp_group)
         self.enable_sp = sp_size > 1
 
+        self.method = method
+        assert self.method in ["dsp", "ulysses", "megatron"]
 
-def set_parallel_manager(dp_size, sp_size, dp_axis, sp_axis):
+
+def set_parallel_manager(dp_size, sp_size, dp_axis, sp_axis, method):
     global PARALLEL_MANAGER
-    PARALLEL_MANAGER = ParallelManager(dp_size, sp_size, dp_axis, sp_axis)
+    PARALLEL_MANAGER = ParallelManager(dp_size, sp_size, dp_axis, sp_axis, method)
 
 
 def get_data_parallel_group():
@@ -50,3 +53,7 @@ def use_sequence_parallelism():
 
 def get_parallel_manager():
     return PARALLEL_MANAGER
+
+
+def get_sequence_parallelism_method():
+    return PARALLEL_MANAGER.method
