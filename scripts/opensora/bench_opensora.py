@@ -169,8 +169,15 @@ def main(args):
         optimizer.zero_grad()
         perf.on_step_end(x)
 
-    perf.on_fit_end()
-    coordinator.print_on_master(f"Config: {args}")
+    perf_result = perf.on_fit_end()
+    final_output = f"Config:\n{args}\n\nPerformance: {perf_result}"
+    if coordinator.is_master():
+        print(final_output)
+        with open(
+            f"log/batch{args.batch_size}_f{args.num_frames}_h{args.image_size[0]}_w{args.image_size[1]}_sp{args.sequence_parallel_size}_{args.sp}_perf.log",
+            "w",
+        ) as f:
+            f.write(final_output)
 
 
 if __name__ == "__main__":

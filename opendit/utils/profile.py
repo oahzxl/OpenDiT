@@ -88,7 +88,5 @@ class PerformanceEvaluator:
     def on_fit_end(self) -> None:
         avg_duration = all_reduce_mean(self.timer.duration, self.coordinator.world_size)
         avg_throughput = self.num_samples * self.dp_world_size / (avg_duration + 1e-12)
-        self.coordinator.print_on_master(
-            f"\nnum_samples: {self.num_samples}, dp_world_size: {self.dp_world_size}, avg_duration: {avg_duration}, "
-            f"avg_throughput: {avg_throughput} samples/sec\n"
-        )
+        output_str = f"\nnum_samples: {self.num_samples}, dp_world_size: {self.dp_world_size}, avg_duration: {avg_duration}, avg_throughput: {avg_throughput} samples/sec\n"
+        return output_str
