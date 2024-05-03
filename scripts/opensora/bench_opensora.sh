@@ -22,4 +22,4 @@ torchrun --standalone --nproc_per_node=8 scripts/opensora/bench_opensora.py \
     --num_frames $NUM_FRAMES \
     --image_size $H $W \
     --sp $SP \
-    --sequence_parallel_size $SP_SIZE | tee log/BATCHSIZE${BATCH_SIZE}_NUMFRAMES${NUM_FRAMES}_H${H}_W${W}_SPSIZE${SP_SIZE}_METHOD${SP}.log
+    --sequence_parallel_size $SP_SIZE | tee log/BATCHSIZE-${BATCH_SIZE}_NUMFRAMES-${NUM_FRAMES}_H-${H}_W-${W}_SPSIZE-${SP_SIZE}_METHOD-${SP}.log
