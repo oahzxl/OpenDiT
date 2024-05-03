@@ -165,3 +165,4 @@ coverage.xml
 .testmondata*
 
 .pth
+pretrained
