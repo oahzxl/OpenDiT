@@ -9,8 +9,12 @@ import torch.utils.checkpoint
 from einops import rearrange
 from torch.distributed import ProcessGroup
 
-from opendit.core.comm import AllGather, AsyncAllGatherForTwo, all_to_all_comm
-from opendit.core.parallel_mgr import get_sequence_parallel_group, get_sequence_parallelism_method
+from opendit.core.comm import AllGather, AsyncAllGatherForTwo, ReduceScatter, all_to_all_comm
+from opendit.core.parallel_mgr import (
+    get_sequence_parallel_group,
+    get_sequence_parallel_size,
+    get_sequence_parallelism_method,
+)
 
 
 class DistAttention(nn.Module):
@@ -226,17 +230,35 @@ class Attention(nn.Module):
         self.scale = self.head_dim**-0.5
         self.enable_flashattn = enable_flashattn
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        if get_sequence_parallelism_method() == "megatron":
+            self.qkv = nn.Linear(dim, dim * 3 // get_sequence_parallel_size(), bias=qkv_bias)
+        else:
+            self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
+        if get_sequence_parallelism_method() == "megatron":
+            self.proj = nn.Linear(dim // get_sequence_parallel_size(), dim)
+        else:
+            self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x: torch.Tensor, dim: int) -> torch.Tensor:
+        if get_sequence_parallelism_method() == "megatron":
+            x = AllGather.apply(x, get_sequence_parallel_group())[0]
+            if dim == 1:
+                x = rearrange(x, "sp b n c -> b (sp n) c")
+            else:
+                x = rearrange(x, "sp b n c -> (b sp) n c")
+
         B, N, C = x.shape
         qkv = self.qkv(x)
-        qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
+
+        if get_sequence_parallelism_method() == "megatron":
+            qkv_shape = (B, N, 3, self.num_heads // get_sequence_parallel_size(), self.head_dim)
+        else:
+            qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
+
         if self.enable_flashattn:
             qkv_permute_shape = (2, 0, 1, 3, 4)
         else:
@@ -271,7 +293,10 @@ class Attention(nn.Module):
             attn = self.attn_drop(attn)
             x = attn @ v
 
-        x_output_shape = (B, N, C)
+        if get_sequence_parallelism_method() == "megatron":
+            x_output_shape = (B, N, C // get_sequence_parallel_size())
+        else:
+            x_output_shape = (B, N, C)
 
         if get_sequence_parallelism_method() == "ulysses":
             x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=dim, gather_dim=2)
@@ -281,6 +306,13 @@ class Attention(nn.Module):
         x = x.reshape(x_output_shape)
         x = self.proj(x)
         x = self.proj_drop(x)
+
+        if get_sequence_parallelism_method() == "megatron":
+            if dim == 0:
+                x = x.view(get_sequence_parallel_size(), -1, N, C)
+            else:
+                x = rearrange(x, "b (sp n) c -> sp b n c", sp=get_sequence_parallel_size())
+            x = ReduceScatter.apply(x, get_sequence_parallel_group())[0]
         return x
 
 
@@ -294,18 +326,35 @@ class MultiHeadCrossAttention(nn.Module):
         self.head_dim = d_model // num_heads
         self.enable_flashattn = enable_flashattn
 
-        self.q_linear = nn.Linear(d_model, d_model)
-        self.kv_linear = nn.Linear(d_model, d_model * 2)
+        if get_sequence_parallelism_method() == "megatron":
+            self.q_linear = nn.Linear(d_model, d_model // get_sequence_parallel_size())
+            self.kv_linear = nn.Linear(d_model, d_model * 2 // get_sequence_parallel_size())
+        else:
+            self.q_linear = nn.Linear(d_model, d_model)
+            self.kv_linear = nn.Linear(d_model, d_model * 2)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(d_model, d_model)
+        if get_sequence_parallelism_method() == "megatron":
+            self.proj = nn.Linear(d_model // get_sequence_parallel_size(), d_model)
+        else:
+            self.proj = nn.Linear(d_model, d_model)
         self.proj_drop = nn.Dropout(proj_drop)
 
     def forward(self, x, cond, mask=None):
         # query/value: img tokens; key: condition; mask: if padding tokens
+
+        if get_sequence_parallelism_method() == "megatron":
+            x = AllGather.apply(x, get_sequence_parallel_group())[0]
+            x = rearrange(x, "sp b n c -> b (sp n) c")
+
         B, N, C = x.shape
 
-        q = self.q_linear(x).view(1, -1, self.num_heads, self.head_dim)
-        kv = self.kv_linear(cond).view(1, -1, 2, self.num_heads, self.head_dim)
+        if get_sequence_parallelism_method() == "megatron":
+            num_heads = self.num_heads // get_sequence_parallel_size()
+        else:
+            num_heads = self.num_heads
+
+        q = self.q_linear(x).view(1, -1, num_heads, self.head_dim)
+        kv = self.kv_linear(cond).view(1, -1, 2, num_heads, self.head_dim)
         k, v = kv.unbind(2)
 
         if get_sequence_parallelism_method() == "ulysses":
@@ -321,6 +370,11 @@ class MultiHeadCrossAttention(nn.Module):
 
         x = self.proj(x)
         x = self.proj_drop(x)
+
+        if get_sequence_parallelism_method() == "megatron":
+            x = rearrange(x, "b (sp n) c -> sp b n c", sp=get_sequence_parallel_size())
+            x = ReduceScatter.apply(x, get_sequence_parallel_group())[0]
+
         return x
 
     def flash_attn_impl(self, q, k, v, mask, B, N, C):
@@ -329,10 +383,15 @@ class MultiHeadCrossAttention(nn.Module):
         q_seqinfo = _SeqLenInfo.from_seqlens([N] * B)
         k_seqinfo = _SeqLenInfo.from_seqlens(mask)
 
+        if get_sequence_parallelism_method() == "megatron":
+            num_heads = self.num_heads // get_sequence_parallel_size()
+        else:
+            num_heads = self.num_heads
+
         x = flash_attn_varlen_func(
-            q.view(-1, self.num_heads, self.head_dim),
-            k.view(-1, self.num_heads, self.head_dim),
-            v.view(-1, self.num_heads, self.head_dim),
+            q.view(-1, num_heads, self.head_dim),
+            k.view(-1, num_heads, self.head_dim),
+            v.view(-1, num_heads, self.head_dim),
             cu_seqlens_q=q_seqinfo.seqstart.cuda(),
             cu_seqlens_k=k_seqinfo.seqstart.cuda(),
             max_seqlen_q=q_seqinfo.max_seqlen,
@@ -343,7 +402,10 @@ class MultiHeadCrossAttention(nn.Module):
         if get_sequence_parallelism_method() == "ulysses":
             x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=1, gather_dim=2)
 
-        x = x.view(B, N, C)
+        if get_sequence_parallelism_method() == "megatron":
+            x = x.view(B, N, C // get_sequence_parallel_size())
+        else:
+            x = x.view(B, N, C)
         return x
 
     def torch_impl(self, q, k, v, mask, B, N, C):

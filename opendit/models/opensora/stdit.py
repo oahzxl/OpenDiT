@@ -115,7 +115,7 @@ class STDiTBlock(nn.Module):
         # spatial branch
         if get_sequence_parallelism_method() == "dsp":
             d_s, d_t = self.get_spatial_temporal_size(self.enable_sequence_parallelism, True)
-        elif get_sequence_parallelism_method() == "ulysses":
+        elif get_sequence_parallelism_method() in ["ulysses", "megatron"]:
             d_s, d_t = self.d_s, self.d_t // get_sequence_parallel_size()
 
         x_s = rearrange(x_m, "b (t s) d -> (b t) s d", t=d_t, s=d_s)
@@ -289,7 +289,7 @@ class STDiT(nn.Module):
         x = rearrange(x, "b t s d -> b (t s) d")
 
         # shard over the sequence dim if sp is enabled
-        if get_sequence_parallelism_method() in ["dsp", "ulysses"]:
+        if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
             x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down")
 
         t = self.t_embedder(timestep, dtype=x.dtype)  # (N, D)
@@ -318,7 +318,7 @@ class STDiT(nn.Module):
             else:
                 x = block(x, y, t0, y_lens, tpe)
 
-        if get_sequence_parallelism_method() in ["dsp", "ulysses"]:
+        if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
             x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
 
         # final process

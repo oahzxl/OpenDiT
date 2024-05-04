@@ -135,6 +135,7 @@ class AllGather(torch.autograd.Function):
         comm_size = dist.get_world_size(group)
         if comm_size == 1:
             return inputs.unsqueeze(0), None
+        inputs = inputs.contiguous()
 
         buffer_shape = (comm_size,) + inputs.shape
         outputs = torch.empty(buffer_shape, dtype=inputs.dtype, device=inputs.device)
