@@ -19,7 +19,10 @@ class ParallelManager(ProcessGroupMesh):
         self.enable_sp = sp_size > 1
 
         self.method = method
-        assert self.method in ["dsp", "ulysses", "megatron"]
+        if self.enable_sp:
+            assert self.method in ["dsp", "ulysses", "megatron"]
+        else:
+            assert self.method == "none"
 
 
 def set_parallel_manager(dp_size, sp_size, dp_axis, sp_axis, method):

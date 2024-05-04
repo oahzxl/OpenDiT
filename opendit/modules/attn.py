@@ -10,6 +10,7 @@ from einops import rearrange
 from torch.distributed import ProcessGroup
 
 from opendit.core.comm import AllGather, AsyncAllGatherForTwo, all_to_all_comm
+from opendit.core.parallel_mgr import get_sequence_parallel_group, get_sequence_parallelism_method
 
 
 class DistAttention(nn.Module):
@@ -232,7 +233,7 @@ class Attention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, dim: int) -> torch.Tensor:
         B, N, C = x.shape
         qkv = self.qkv(x)
         qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
@@ -243,6 +244,13 @@ class Attention(nn.Module):
         qkv = qkv.view(qkv_shape).permute(qkv_permute_shape)
         q, k, v = qkv.unbind(0)
         q, k = self.q_norm(q), self.k_norm(k)
+
+        if get_sequence_parallelism_method() == "ulysses":
+            assert self.enable_flashattn
+            q = all_to_all_comm(q, get_sequence_parallel_group(), scatter_dim=2, gather_dim=dim)
+            k = all_to_all_comm(k, get_sequence_parallel_group(), scatter_dim=2, gather_dim=dim)
+            v = all_to_all_comm(v, get_sequence_parallel_group(), scatter_dim=2, gather_dim=dim)
+
         if self.enable_flashattn:
             from flash_attn import flash_attn_func
 
@@ -264,6 +272,10 @@ class Attention(nn.Module):
             x = attn @ v
 
         x_output_shape = (B, N, C)
+
+        if get_sequence_parallelism_method() == "ulysses":
+            x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=dim, gather_dim=2)
+
         if not self.enable_flashattn:
             x = x.transpose(1, 2)
         x = x.reshape(x_output_shape)
@@ -296,6 +308,12 @@ class MultiHeadCrossAttention(nn.Module):
         kv = self.kv_linear(cond).view(1, -1, 2, self.num_heads, self.head_dim)
         k, v = kv.unbind(2)
 
+        if get_sequence_parallelism_method() == "ulysses":
+            assert self.enable_flashattn
+            q = all_to_all_comm(q, get_sequence_parallel_group(), scatter_dim=2, gather_dim=1)
+            k = all_to_all_comm(k, get_sequence_parallel_group(), scatter_dim=2, gather_dim=1)
+            v = all_to_all_comm(v, get_sequence_parallel_group(), scatter_dim=2, gather_dim=1)
+
         if self.enable_flashattn:
             x = self.flash_attn_impl(q, k, v, mask, B, N, C)
         else:
@@ -321,6 +339,10 @@ class MultiHeadCrossAttention(nn.Module):
             max_seqlen_k=k_seqinfo.max_seqlen,
             dropout_p=self.attn_drop.p if self.training else 0.0,
         )
+
+        if get_sequence_parallelism_method() == "ulysses":
+            x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=1, gather_dim=2)
+
         x = x.view(B, N, C)
         return x
 
