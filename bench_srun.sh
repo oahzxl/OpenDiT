@@ -1,13 +1,14 @@
-WARMUP=10
-RUNTIME=10
+WARMUP=20
+RUNTIME=20
 BATCH_SIZE=1
 
 # frame, hw, sp_size
 HYPE_LIST=(
-    "(64 768 2)"
-    "(128 1024 2)"
-    "(256 1536 4)"
-    "(512 2048 4)"
+    # "(32 512 2)" # 64k
+    # "(128 1024 2)"
+    # "(256 1536 4)"
+    "(512 2048 8)"
+    "(1024 3072 8)"
 )
 GPU_NUM=16
 # sp_list=("dsp" "megatron" "ulysses")

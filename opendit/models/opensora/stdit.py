@@ -119,7 +119,11 @@ class STDiTBlock(nn.Module):
             d_s, d_t = self.d_s, self.d_t // get_sequence_parallel_size()
 
         x_s = rearrange(x_m, "b (t s) d -> (b t) s d", t=d_t, s=d_s)
-        x_s = self.attn(x_s, dim=0)
+        if x_s.shape[1] > 16000 and x_s.shape[0] > 16:
+            for i in range(0, x_s.shape[0], 16):
+                x_s[i : i + 16] = self.attn(x_s[i : i + 16], dim=0)
+        else:
+            x_s = self.attn(x_s, dim=0)
         x_s = rearrange(x_s, "(b t) s d -> b (t s) d", t=d_t, s=d_s)
         x = x + self.drop_path(gate_msa * x_s)
 
@@ -130,7 +134,12 @@ class STDiTBlock(nn.Module):
 
         # temporal branch
         x_t = rearrange(x, "b (t s) d -> (b s) t d", t=d_t, s=d_s)
-        x_t = self.attn_temp(x_t, dim=1)
+        if x_t.shape[0] > 4000:
+            gap = 1024
+            for i in range(0, x_t.shape[0], gap):
+                x_t[i : i + gap] = self.attn_temp(x_t[i : i + gap], dim=1)
+        else:
+            x_t = self.attn_temp(x_t, dim=1)
         x_t = rearrange(x_t, "(b s) t d -> b (t s) d", t=d_t, s=d_s)
         x = x + self.drop_path(gate_msa * x_t)
 
@@ -281,7 +290,9 @@ class STDiT(nn.Module):
         y = y.to(self.dtype)
 
         # embedding
-        x = self.x_embedder(x)  # (B, N, D)
+        # x = self.x_embedder(x)  # (B, N, D)
+        x = x.requires_grad_(True)
+        x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.x_embedder), x)
         assert x.requires_grad == True, "Input x must require gradient"
 
         x = rearrange(x, "b (t s) d -> b t s d", t=self.num_temporal, s=self.num_spatial)
@@ -322,8 +333,10 @@ class STDiT(nn.Module):
             x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
 
         # final process
-        x = self.final_layer(x, t)  # (N, T, patch_size ** 2 * out_channels)
-        x = self.unpatchify(x)  # (N, out_channels, H, W)
+        # x = self.final_layer(x, t)  # (N, T, patch_size ** 2 * out_channels)
+        x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.final_layer), x, t)
+        # x = self.unpatchify(x)  # (N, out_channels, H, W)
+        x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.ununpatchify), x)
 
         # cast to float32 for better accuracy
         x = x.to(torch.float32)

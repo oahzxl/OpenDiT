@@ -70,7 +70,7 @@ def main(args):
     # Initialize Model, Objective, Optimizer
     # ======================================================
     # Create VAE encoder
-    vae = VideoAutoencoderKL(args.vae_pretrained_path, split=4).to(device, dtype)
+    vae = VideoAutoencoderKL(args.vae_pretrained_path).to(device, dtype)
 
     # Configure input size
     input_size = (args.num_frames, args.image_size[0], args.image_size[1])
@@ -133,6 +133,7 @@ def main(args):
         num_workers=args.num_workers,
         pg_manager=get_parallel_manager(),
     )
+    print(f"Dataset Init")
 
     # Boost model for distributed training
     torch.set_default_dtype(dtype)
@@ -140,6 +141,7 @@ def main(args):
         model=model, optimizer=optimizer, lr_scheduler=lr_scheduler, dataloader=dataloader
     )
     torch.set_default_dtype(torch.float)
+    print(f"Param Init")
 
     perf = PerformanceEvaluator(ignore_steps=args.warmup, dp_world_size=dp_size)
 
@@ -151,10 +153,14 @@ def main(args):
         assert x0.shape == (args.batch_size, 3, args.num_frames, args.image_size[0], args.image_size[1]), x0.shape
         y0 = batch["text"]
         # Map input images to latent space + normalize latents:
-        x0 = vae.encode(x0.to(dtype))
+        x00 = x0[:, :, :2, :, :]
+        x00 = vae.encode(x00.to(dtype))
+        x0 = x00.repeat(1, 1, args.num_frames // 2, 1, 1)
+        del x00
         # Prepare text inputs
         model_args0 = text_encoder.encode(y0)
 
+    torch.cuda.empty_cache()
     dataloader_iter = iter(dataloader)
     for step in range(args.warmup + args.runtime):
         perf.on_step_start(step)
@@ -173,7 +179,9 @@ def main(args):
         perf.on_step_end(x)
 
     perf_result = perf.on_fit_end()
-    final_output += f"Config:\n{args}\n\nPerformance: {perf_result}"
+    max_alloc_memory = torch.cuda.max_memory_allocated() / 1024**3
+    max_reserved_memory = torch.cuda.max_memory_reserved() / 1024**3
+    final_output += f"Config:\n{args}\n\nPerformance: {perf_result}\n\nMax allocated memory: {max_alloc_memory:.2f}GB\nMax reserved memory: {max_reserved_memory:.2f}GB\n\n"
     if coordinator.is_master():
         print(final_output)
         with open(
