@@ -121,7 +121,7 @@ def main(args):
     dataset = DatasetFromCSV(
         args.data_path,
         transform=get_transforms_video((args.image_size[0], args.image_size[1])),
-        num_frames=args.num_frames,
+        num_frames=2,
         frame_interval=args.frame_interval,
     )
     dataloader = prepare_dataloader(
@@ -133,7 +133,6 @@ def main(args):
         num_workers=args.num_workers,
         pg_manager=get_parallel_manager(),
     )
-    print(f"Dataset Init")
 
     # Boost model for distributed training
     torch.set_default_dtype(dtype)
@@ -141,7 +140,6 @@ def main(args):
         model=model, optimizer=optimizer, lr_scheduler=lr_scheduler, dataloader=dataloader
     )
     torch.set_default_dtype(torch.float)
-    print(f"Param Init")
 
     perf = PerformanceEvaluator(ignore_steps=args.warmup, dp_world_size=dp_size)
 
@@ -150,6 +148,7 @@ def main(args):
     # VAE encode
     with torch.no_grad():
         x0 = batch["video"].to(device)
+        x0 = x0.repeat(1, 1, args.num_frames // 2, 1, 1)
         assert x0.shape == (args.batch_size, 3, args.num_frames, args.image_size[0], args.image_size[1]), x0.shape
         y0 = batch["text"]
         # Map input images to latent space + normalize latents:
@@ -200,7 +199,7 @@ if __name__ == "__main__":
     parser.add_argument("--mixed_precision", type=str, default="bf16", choices=["bf16", "fp16", "fp32"])
 
     parser.add_argument("--global_seed", type=int, default=42)
-    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--num_workers", type=int, default=1)
 
     parser.add_argument("--outputs", type=str, default="./outputs", help="Path to the output directory")
     parser.add_argument("--data_path", type=str, default="./datasets", help="Path to the dataset")

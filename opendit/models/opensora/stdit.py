@@ -335,8 +335,7 @@ class STDiT(nn.Module):
         # final process
         # x = self.final_layer(x, t)  # (N, T, patch_size ** 2 * out_channels)
         x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.final_layer), x, t)
-        # x = self.unpatchify(x)  # (N, out_channels, H, W)
-        x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.ununpatchify), x)
+        x = self.unpatchify(x)  # (N, out_channels, H, W)
 
         # cast to float32 for better accuracy
         x = x.to(torch.float32)
