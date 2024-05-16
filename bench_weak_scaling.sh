@@ -12,7 +12,7 @@ sp_list=("dsp" "megatron" "ulysses")
 
 for hype in "${HYPE_LIST[@]}"
 do
-    read -r NUM_FRAMES H W SP_SIZE <<<"${hype//[()]/}"
+    read -r BATCH_SIZE NUM_FRAMES H W SP_SIZE <<<"${hype//[()]/}"
     for SP in ${sp_list[@]}
     do
         GPU_NUM=$SP_SIZE
