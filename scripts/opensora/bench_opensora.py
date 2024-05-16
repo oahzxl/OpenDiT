@@ -24,6 +24,7 @@ from opendit.models.opensora.datasets import DatasetFromCSV, get_transforms_vide
 from opendit.models.opensora.scheduler import IDDPM
 from opendit.models.opensora.stdit import STDiT_XL_2
 from opendit.utils.profile import PerformanceEvaluator
+from opendit.utils.train_utils import format_numel_str
 from opendit.utils.utils import str_to_dtype
 from opendit.vae.wrapper import VideoAutoencoderKL
 
@@ -95,6 +96,8 @@ def main(args):
         dtype=dtype,
         **model_config,
     ).to(device, dtype)
+    final_output = f"Model params: {format_numel_str(sum(p.numel() for p in model.parameters()))}\n\n"
+    print(final_output)
 
     if args.grad_checkpoint:
         model.enable_gradient_checkpointing()
@@ -170,7 +173,7 @@ def main(args):
         perf.on_step_end(x)
 
     perf_result = perf.on_fit_end()
-    final_output = f"Config:\n{args}\n\nPerformance: {perf_result}"
+    final_output += f"Config:\n{args}\n\nPerformance: {perf_result}"
     if coordinator.is_master():
         print(final_output)
         with open(
