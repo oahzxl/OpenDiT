@@ -7,6 +7,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import argparse
+from tqdm import tqdm
 
 import colossalai
 import torch
@@ -161,7 +162,7 @@ def main(args):
 
     torch.cuda.empty_cache()
     dataloader_iter = iter(dataloader)
-    for step in range(args.warmup + args.runtime):
+    for step in tqdm(range(args.warmup + args.runtime)):
         perf.on_step_start(step)
         x = x0.clone().detach()
         model_args = {k: v.clone().detach() for k, v in model_args0.items()}
