@@ -266,6 +266,9 @@ def _split_sequence_func(inputs, pg: dist.ProcessGroup, dim=-1):
         f"The dimension to split ({dim_size}) is not a multiple of world size ({world_size}), "
         f"cannot split tensor evenly"
     )
+    assert dim_size >= world_size, (
+        f"The dimension to split ({dim_size}) is less than world size ({world_size}), "
+    )
 
     outputs = torch.split(inputs, dim_size // world_size, dim=dim)[rank]
     return outputs
@@ -336,10 +339,7 @@ class _SplitForwardGatherBackward(torch.autograd.Function):
         ctx.process_group = process_group
         ctx.dim = dim
         ctx.grad_scale = grad_scale
-        assert input_.size(dim) % dist.get_world_size(process_group) == 0 and input_.size(dim) >= dist.get_world_size(process_group), (
-            f"The dimension to split ({input_.size(dim)}) is not a multiple of world size ({dist.get_world_size(process_group)}), "
-            f"cannot split tensor evenly"
-        )
+
         return _split_sequence_func(input_, process_group, dim)
 
     @staticmethod
