@@ -15,7 +15,7 @@ mkdir -p log
 
 echo "run WARMUP=$WARMUP RUNTIME=$RUNTIME BATCH_SIZE=$BATCH_SIZE NUM_FRAMES=$NUM_FRAMES H=$H W=$W SP=$SP SP_SIZE=$SP_SIZE"
 srun -N${NUM_NODES} --gres=gpu:${GRES} --ntasks-per-node=1 --cpus-per-task=${CPUS} --job-name=$3 --mem=0 \
-python $slurm_launcher --script scripts/opensora/bench_opensora.py --main_process_port 34088 \
+python $slurm_launcher --script scripts/opensora/bench_opensora.py --main_process_port 34089 \
     --batch_size $BATCH_SIZE \
     --mixed_precision bf16 \
     --grad_checkpoint \
