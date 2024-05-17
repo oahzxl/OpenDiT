@@ -207,6 +207,8 @@ class ReduceScatter(torch.autograd.Function):
 
 
 def _all_to_all_func(input_, world_size, group, scatter_dim, gather_dim):
+    if world_size == 1:
+        return input_
     input_list = [t.contiguous() for t in torch.tensor_split(input_, world_size, scatter_dim)]
     output_list = [torch.empty_like(input_list[0]) for _ in range(world_size)]
     dist.all_to_all(output_list, input_list, group=group)
