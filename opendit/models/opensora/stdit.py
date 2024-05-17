@@ -418,6 +418,13 @@ def STDiT_XL_2(from_pretrained=None, **kwargs):
     return model
 
 
+def STDiT_XXL_2(from_pretrained=None, **kwargs):
+    model = STDiT(depth=36, hidden_size=2048, patch_size=(1, 2, 2), num_heads=32, **kwargs)
+    # if from_pretrained is not None:
+    #     load_checkpoint(model, from_pretrained)
+    return model
+
+
 class Print(torch.autograd.Function):
     """All-to-all communication.
 

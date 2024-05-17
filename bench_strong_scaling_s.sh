@@ -1,5 +1,6 @@
 WARMUP=5
 RUNTIME=5
+MODEL_TYPE="720M"
 
 HYPE_LIST=(
     "(1 256 1024 1024 64)"
@@ -16,6 +17,6 @@ do
     for SP in ${sp_list[@]}
     do
         GPU_NUM=$SP_SIZE
-        bash scripts/opensora/bench_opensora_srun.sh xx $GPU_NUM test_ds $WARMUP $RUNTIME $BATCH_SIZE $NUM_FRAMES $H $W $SP $SP_SIZE
+        bash scripts/opensora/bench_opensora_srun.sh xx $GPU_NUM test_ds $WARMUP $RUNTIME $BATCH_SIZE $NUM_FRAMES $H $W $SP $SP_SIZE $MODEL_TYPE
     done
 done

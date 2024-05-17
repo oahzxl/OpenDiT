@@ -23,7 +23,7 @@ from opendit.datasets.dataloader import prepare_dataloader
 from opendit.embed.t5_text_emb import T5Encoder
 from opendit.models.opensora.datasets import DatasetFromCSV, get_transforms_video
 from opendit.models.opensora.scheduler import IDDPM
-from opendit.models.opensora.stdit import STDiT_XL_2
+from opendit.models.opensora.stdit import STDiT_XL_2, STDiT_XXL_2
 from opendit.utils.profile import PerformanceEvaluator
 from opendit.utils.train_utils import format_numel_str
 from opendit.utils.utils import str_to_dtype
@@ -92,7 +92,8 @@ def main(args):
     }
 
     # Create DiT model
-    model = STDiT_XL_2(
+    model_cls = STDiT_XXL_2 if args.model_type == "3B" else STDiT_XL_2
+    model = model_cls(
         enable_flashattn=args.enable_flashattn,
         dtype=dtype,
         **model_config,
@@ -217,6 +218,7 @@ if __name__ == "__main__":
     # model
     parser.add_argument("--model_space_scale", type=float, default=1.0)
     parser.add_argument("--model_time_scale", type=float, default=1.0)
+    parser.add_argument("--model_type", type=str, choices=["720M", "3B"])
 
     # vae
     parser.add_argument("--vae_pretrained_path", type=str, default="stabilityai/sd-vae-ft-ema")
