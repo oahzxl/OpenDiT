@@ -283,16 +283,17 @@ class STDiT(nn.Module):
         # embedding
         # x = self.x_embedder(x)  # (B, N, D)
         x = x.requires_grad_(True)
+        
+        # shard over the sequence dim if sp is enabled
+        if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
+            x = split_sequence(x, get_sequence_parallel_group(), dim=2, grad_scale="down")
+
         x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.x_embedder), x)
         assert x.requires_grad == True, "Input x must require gradient"
 
-        x = rearrange(x, "b (t s) d -> b t s d", t=self.num_temporal, s=self.num_spatial)
-        x = x + self.pos_embed
-        x = rearrange(x, "b t s d -> b (t s) d")
-
-        # shard over the sequence dim if sp is enabled
-        if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
-            x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down")
+        # x = rearrange(x, "b (t s) d -> b t s d", t=self.num_temporal, s=self.num_spatial)
+        # x = x + self.pos_embed
+        # x = rearrange(x, "b t s d -> b (t s) d")
 
         t = self.t_embedder(timestep, dtype=x.dtype)  # (N, D)
         t0 = self.t_block(t)
