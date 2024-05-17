@@ -14,7 +14,7 @@ import torch.nn as nn
 from einops import rearrange
 from timm.models.layers import DropPath
 from timm.models.vision_transformer import Mlp
-
+import torch.distributed as dist
 from opendit.core.comm import all_to_all_comm, gather_sequence, split_sequence
 from opendit.core.parallel_mgr import (
     get_sequence_parallel_group,
@@ -119,11 +119,7 @@ class STDiTBlock(nn.Module):
             d_s, d_t = self.d_s, self.d_t // get_sequence_parallel_size()
 
         x_s = rearrange(x_m, "b (t s) d -> (b t) s d", t=d_t, s=d_s)
-        if x_s.shape[1] > 16000 and x_s.shape[0] > 16:
-            for i in range(0, x_s.shape[0], 16):
-                x_s[i : i + 16] = self.attn(x_s[i : i + 16], dim=0)
-        else:
-            x_s = self.attn(x_s, dim=0)
+        x_s = self.attn(x_s, dim=0)
         x_s = rearrange(x_s, "(b t) s d -> b (t s) d", t=d_t, s=d_s)
         x = x + self.drop_path(gate_msa * x_s)
 
@@ -134,12 +130,7 @@ class STDiTBlock(nn.Module):
 
         # temporal branch
         x_t = rearrange(x, "b (t s) d -> (b s) t d", t=d_t, s=d_s)
-        if x_t.shape[0] > 4000:
-            gap = 1024
-            for i in range(0, x_t.shape[0], gap):
-                x_t[i : i + gap] = self.attn_temp(x_t[i : i + gap], dim=1)
-        else:
-            x_t = self.attn_temp(x_t, dim=1)
+        x_t = self.attn_temp(x_t, dim=1)
         x_t = rearrange(x_t, "(b s) t d -> b (t s) d", t=d_t, s=d_s)
         x = x + self.drop_path(gate_msa * x_t)
 
@@ -329,16 +320,17 @@ class STDiT(nn.Module):
             else:
                 x = block(x, y, t0, y_lens, tpe)
 
-        if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
-            x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
-
         # final process
         # x = self.final_layer(x, t)  # (N, T, patch_size ** 2 * out_channels)
         x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.final_layer), x, t)
+        
+        if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
+            x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
+        
         x = self.unpatchify(x)  # (N, out_channels, H, W)
 
         # cast to float32 for better accuracy
-        x = x.to(torch.float32)
+        # x = x.to(torch.float32)
         return x
 
     def unpatchify(self, x):
@@ -424,3 +416,35 @@ def STDiT_XL_2(from_pretrained=None, **kwargs):
     if from_pretrained is not None:
         load_checkpoint(model, from_pretrained)
     return model
+
+
+class Print(torch.autograd.Function):
+    """All-to-all communication.
+
+    Args:
+        input_: input matrix
+        process_group: communication group
+        scatter_dim: scatter dimension
+        gather_dim: gather dimension
+    """
+
+    @staticmethod
+    def forward(ctx, inputs, prompt):
+        torch.cuda.synchronize()
+        if dist.get_rank() == 0:
+            print(
+                f"{prompt}-fwd memory: {torch.cuda.memory_allocated() / 1024.0 ** 3:.2f}, max: {torch.cuda.max_memory_allocated() / 1024.0 ** 3:.2f}"
+            )
+        torch.cuda.reset_max_memory_allocated()
+        ctx.prompt = prompt
+
+        return inputs
+
+    @staticmethod
+    def backward(ctx, *grad_output):
+        torch.cuda.synchronize()
+        if dist.get_rank() == 0:
+            print(
+                f"{ctx.prompt}-bwd memory: {torch.cuda.memory_allocated() / 1024.0 ** 3:.2f}, max: {torch.cuda.max_memory_allocated() / 1024.0 ** 3:.2f}"
+            )
+        return grad_output[0], None

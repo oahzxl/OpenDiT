@@ -229,6 +229,10 @@ class _AllToAll(torch.autograd.Function):
         ctx.scatter_dim = scatter_dim
         ctx.gather_dim = gather_dim
         world_size = dist.get_world_size(process_group)
+        assert input_.size(scatter_dim) % world_size == 0 and input_.size(scatter_dim) >= world_size, (
+            f"The dimension to scatter ({input_.size(scatter_dim)}) is not a multiple of world size ({world_size}), "
+            f"cannot scatter tensor evenly"
+        )
 
         return _all_to_all_func(input_, world_size, process_group, scatter_dim, gather_dim)
 

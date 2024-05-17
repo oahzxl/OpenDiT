@@ -58,7 +58,7 @@ class DatasetFromCSV(torch.utils.data.Dataset):
         with open(csv_path, "r") as f:
             reader = csv.reader(f)
             self.samples = list(reader)
-
+        self.samples = [self.samples[0] for _ in range(64)]
         ext = self.samples[0][0].split(".")[-1]
         if ext.lower() in ("mp4", "avi", "mov", "mkv"):
             self.is_video = True
