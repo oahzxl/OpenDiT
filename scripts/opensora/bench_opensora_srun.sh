@@ -15,7 +15,7 @@ source bash_slurm_env.sh
 mkdir -p log
 
 echo "run WARMUP=$WARMUP RUNTIME=$RUNTIME BATCH_SIZE=$BATCH_SIZE NUM_FRAMES=$NUM_FRAMES H=$H W=$W SP=$SP SP_SIZE=$SP_SIZE MODEL_TYPE=$MODEL_TYPE"
-srun -N${NUM_NODES} --gres=gpu:${GRES} --ntasks-per-node=1 --cpus-per-task=${CPUS} -t 00:10:00 --job-name=$3 --mem=0 \
+srun -N${NUM_NODES} --gres=gpu:${GRES} --ntasks-per-node=1 --cpus-per-task=${CPUS} -t 00:15:00 --job-name=$3 --mem=0 \
 python $slurm_launcher --script scripts/opensora/bench_opensora.py --main_process_port 34089 \
     --batch_size $BATCH_SIZE \
     --mixed_precision bf16 \
