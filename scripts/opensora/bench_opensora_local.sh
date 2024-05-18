@@ -27,4 +27,5 @@ torchrun --standalone --nproc_per_node=$GRES scripts/opensora/bench_opensora.py 
     --num_frames $NUM_FRAMES \
     --image_size $H $W \
     --sp $SP \
+    --model_type $MODEL_TYPE \
     --sequence_parallel_size $SP_SIZE | tee log/batch${BATCH_SIZE}_f${NUM_FRAMES}_h${H}_w${W}_sp${SP_SIZE}_${SP}.log
