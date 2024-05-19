@@ -273,7 +273,18 @@ class Attention(nn.Module):
             k = all_to_all_comm(k, get_sequence_parallel_group(), scatter_dim=2, gather_dim=dim)
             v = all_to_all_comm(v, get_sequence_parallel_group(), scatter_dim=2, gather_dim=dim)
 
-        if self.enable_flashattn:
+        if dim == 0 and get_sequence_parallelism_method() == "ring":
+            from ring_flash_attn import ring_flash_attn_func
+
+            x = ring_flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                softmax_scale=self.scale,
+                group=get_sequence_parallel_group(),
+            )
+        elif self.enable_flashattn:
             from flash_attn import flash_attn_func
 
             x = flash_attn_func(

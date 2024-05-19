@@ -10,11 +10,12 @@
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from einops import rearrange
 from timm.models.layers import DropPath
 from timm.models.vision_transformer import Mlp
-import torch.distributed as dist
+
 from opendit.core.comm import all_to_all_comm, gather_sequence, split_sequence
 from opendit.core.parallel_mgr import (
     get_sequence_parallel_group,
@@ -115,8 +116,10 @@ class STDiTBlock(nn.Module):
         # spatial branch
         if get_sequence_parallelism_method() == "dsp":
             d_s, d_t = self.get_spatial_temporal_size(self.enable_sequence_parallelism, True)
-        elif get_sequence_parallelism_method() in ["ulysses", "megatron"]:
+        elif get_sequence_parallelism_method() in ["ulysses", "megatron", "ring"]:
             d_s, d_t = self.d_s, self.d_t // get_sequence_parallel_size()
+        elif get_sequence_parallelism_method() == ["ring"]:
+            d_s, d_t = self.d_s // get_sequence_parallel_size(), self.d_t
 
         x_s = rearrange(x_m, "b (t s) d -> (b t) s d", t=d_t, s=d_s)
         x_s = self.attn(x_s, dim=0)
@@ -283,10 +286,12 @@ class STDiT(nn.Module):
         # embedding
         # x = self.x_embedder(x)  # (B, N, D)
         x = x.requires_grad_(True)
-        
+
         # shard over the sequence dim if sp is enabled
         if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
             x = split_sequence(x, get_sequence_parallel_group(), dim=2, grad_scale="down")
+        elif get_sequence_parallelism_method() == "ring":
+            x = split_sequence(x, get_sequence_parallel_group(), dim=-1, grad_scale="down")
 
         x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.x_embedder), x)
         assert x.requires_grad == True, "Input x must require gradient"
@@ -324,10 +329,12 @@ class STDiT(nn.Module):
         # final process
         # x = self.final_layer(x, t)  # (N, T, patch_size ** 2 * out_channels)
         x = torch.utils.checkpoint.checkpoint(self.create_custom_forward(self.final_layer), x, t)
-        
+
         if get_sequence_parallelism_method() in ["dsp", "ulysses", "megatron"]:
             x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
-        
+        elif get_sequence_parallelism_method() == "ring":
+            x = gather_sequence(x, get_sequence_parallel_group(), dim=2, grad_scale="up")
+
         x = self.unpatchify(x)  # (N, out_channels, H, W)
 
         # cast to float32 for better accuracy

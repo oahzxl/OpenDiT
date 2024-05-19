@@ -13,7 +13,7 @@ source bash_slurm_env.sh
 mkdir -p log
 
 echo "run WARMUP=$WARMUP RUNTIME=$RUNTIME BATCH_SIZE=$BATCH_SIZE NUM_FRAMES=$NUM_FRAMES H=$H W=$W SP=$SP SP_SIZE=$SP_SIZE MODEL_TYPE=$MODEL_TYPE"
-srun -N${NUM_NODES} --gres=gpu:${GRES} --ntasks-per-node=1 --cpus-per-task=${CPUS} -t 00:15:00 --job-name=$3 --mem=0 \
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True srun -N${NUM_NODES} --gres=gpu:${GRES} --ntasks-per-node=1 --cpus-per-task=${CPUS} -t 00:15:00 --job-name=$3 --mem=0 \
 torchrun --standalone --nproc_per_node=$GRES scripts/opensora/bench_opensora.py \
     --batch_size $BATCH_SIZE \
     --mixed_precision bf16 \
