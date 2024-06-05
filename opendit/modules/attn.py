@@ -11,6 +11,10 @@ from torch.distributed import ProcessGroup
 
 from opendit.core.comm import AllGather, AsyncAllGatherForTwo, all_to_all_comm
 
+COUNT = 0
+CROSS_SKIP = False
+LOCAL_SPATIAL_ATTN = True
+
 
 class LlamaRMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -255,7 +259,7 @@ class Attention(nn.Module):
             self.rope = True
             self.rotary_emb = rope
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, timestep=None, H=None, W=None) -> torch.Tensor:
         B, N, C = x.shape
         qkv = self.qkv(x)
         qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
@@ -272,13 +276,27 @@ class Attention(nn.Module):
         if self.enable_flashattn:
             from flash_attn import flash_attn_func
 
-            x = flash_attn_func(
-                q,
-                k,
-                v,
-                dropout_p=self.attn_drop.p if self.training else 0.0,
-                softmax_scale=self.scale,
-            )
+            if self.if_skip(timestep):
+                func = lambda x: rearrange(
+                    x, "b (hh h ww w) hd d -> (b hh ww) (h w) hd d", hh=4, ww=4, w=W // 4, h=H // 4
+                )
+                q, k, v = map(func, (q, k, v))
+                x = flash_attn_func(
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.attn_drop.p if self.training else 0.0,
+                    softmax_scale=self.scale,
+                )
+                x = rearrange(x, "(b hh ww) (h w) hd d -> b (hh h ww w) hd d", hh=4, ww=4, w=W // 4, h=H // 4)
+            else:
+                x = flash_attn_func(
+                    q,
+                    k,
+                    v,
+                    dropout_p=self.attn_drop.p if self.training else 0.0,
+                    softmax_scale=self.scale,
+                )
         else:
             dtype = q.dtype
             q = q * self.scale
@@ -288,6 +306,18 @@ class Attention(nn.Module):
             attn = attn.to(dtype)  # cast back attn to original dtype
             attn = self.attn_drop(attn)
             x = attn @ v
+            # if N > 100:
+            #     import matplotlib.pyplot as plt
+            #     import numpy as np
+            #     attn = torch.mean(attn[0].float(), dim=0).cpu().numpy()
+            #     plt.figure(figsize=(8, 6))
+            #     plt.imshow(attn, cmap='hot', interpolation='nearest')
+            #     plt.colorbar()
+            #     plt.title(f'Attention Heatmap')
+            #     plt.xlabel('Key')
+            #     plt.ylabel('Query')
+            #     plt.savefig(f"./samples/attention_heatmap_{timestep}.png")
+            #     plt.close()
 
         x_output_shape = (B, N, C)
         if not self.enable_flashattn:
@@ -296,6 +326,15 @@ class Attention(nn.Module):
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+
+    @torch.compiler.disable
+    def if_skip(self, timestep):
+        global COUNT
+        COUNT += 1
+        if LOCAL_SPATIAL_ATTN and timestep is not None and COUNT % 5 != 0 and timestep < 700:
+            return True
+        else:
+            return False
 
 
 class MultiHeadCrossAttention(nn.Module):
@@ -313,23 +352,37 @@ class MultiHeadCrossAttention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(d_model, d_model)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.last_out = None
+        self.count = 0
 
-    def forward(self, x, cond, mask=None):
+    def forward(self, x, cond, mask=None, timestep=None):
         # query/value: img tokens; key: condition; mask: if padding tokens
         B, N, C = x.shape
 
-        q = self.q_linear(x).view(1, -1, self.num_heads, self.head_dim)
-        kv = self.kv_linear(cond).view(1, -1, 2, self.num_heads, self.head_dim)
-        k, v = kv.unbind(2)
-
-        if self.enable_flashattn:
-            x = self.flash_attn_impl(q, k, v, mask, B, N, C)
+        if self.if_skip(timestep):
+            x = self.last_out
         else:
-            x = self.torch_impl(q, k, v, mask, B, N, C)
+            q = self.q_linear(x).view(1, -1, self.num_heads, self.head_dim)
+            kv = self.kv_linear(cond).view(1, -1, 2, self.num_heads, self.head_dim)
+            k, v = kv.unbind(2)
+            x = self.flash_attn_impl(q, k, v, mask, B, N, C)
+            self.set_last_out(x)
 
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
+
+    @torch.compiler.disable
+    def if_skip(self, timestep):
+        self.count += 1
+        if CROSS_SKIP and timestep is not None and timestep < 700 and self.count % 5 != 0:
+            return True
+        else:
+            return False
+
+    @torch.compiler.disable
+    def set_last_out(self, x):
+        self.last_out = x
 
     def flash_attn_impl(self, q, k, v, mask, B, N, C):
         from flash_attn import flash_attn_varlen_func

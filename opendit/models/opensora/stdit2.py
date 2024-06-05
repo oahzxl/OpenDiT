@@ -218,7 +218,22 @@ class STDiT2Block(nn.Module):
         x = rearrange(x, "B T S C -> B (T S) C")
         return x
 
-    def forward(self, x, y, t, t_tmp, mask=None, x_mask=None, t0=None, t0_tmp=None, T=None, S=None):
+    def forward(
+        self,
+        x,
+        y,
+        t,
+        t_tmp,
+        mask=None,
+        x_mask=None,
+        t0=None,
+        t0_tmp=None,
+        T=None,
+        S=None,
+        timestep=None,
+        H=None,
+        W=None,
+    ):
         B, N, C = x.shape
 
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
@@ -243,7 +258,7 @@ class STDiT2Block(nn.Module):
 
         # spatial branch
         x_s = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
-        x_s = self.attn(x_s)
+        x_s = self.attn(x_s, timestep=timestep, H=H, W=W)
         x_s = rearrange(x_s, "(B T) S C -> B (T S) C", T=T, S=S)
         if x_mask is not None:
             x_s_zero = gate_msa_zero * x_s
@@ -279,7 +294,7 @@ class STDiT2Block(nn.Module):
         x = x + self.drop_path(x_t)
 
         # cross attn
-        x = x + self.cross_attn(x, y, mask)
+        x = x + self.cross_attn(x, y, mask, timestep=timestep)
 
         # modulate
         x_m = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
@@ -564,16 +579,7 @@ class STDiT2(PreTrainedModel):
                 )
             else:
                 x = block(
-                    x,
-                    y,
-                    t_spc_mlp,
-                    t_tmp_mlp,
-                    y_lens,
-                    x_mask,
-                    t0_spc_mlp,
-                    t0_tmp_mlp,
-                    T,
-                    S,
+                    x, y, t_spc_mlp, t_tmp_mlp, y_lens, x_mask, t0_spc_mlp, t0_tmp_mlp, T, S, int(timestep[0]), H, W
                 )
             # x.shape: [B, N, C]
 
@@ -694,7 +700,7 @@ def STDiT2_XL_2(from_pretrained=None, **kwargs):
             return model
         else:
             # otherwise, we load the model from hugging face hub
-            return STDiT2.from_pretrained(from_pretrained)
+            return STDiT2.from_pretrained(from_pretrained, **kwargs)
     else:
         # create a new model
         config = STDiT2Config(depth=28, hidden_size=1152, patch_size=(1, 2, 2), num_heads=16, **kwargs)
