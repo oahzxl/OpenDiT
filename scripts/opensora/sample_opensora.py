@@ -77,7 +77,6 @@ def main(args):
         input_sq_size=512,
         qk_norm=True,
         enable_flash_attn=args.enable_flashattn,
-        enable_layernorm_kernel=args.enable_layernorm_kernel,
         input_size=latent_size,
         in_channels=vae.out_channels,
         caption_channels=text_encoder.output_dim,
@@ -193,7 +192,6 @@ if __name__ == "__main__":
     parser.add_argument("--scheduler_cfg_scale", type=int, default=7.0)
 
     # speedup
-    parser.add_argument("--enable_layernorm_kernel", action="store_true", help="Enable apex layernorm kernel")
     parser.add_argument("--enable_flashattn", action="store_true", help="Enable flashattn kernel")
     parser.add_argument("--enable_t5_speedup", action="store_true", help="Enable t5 speedup")
 
