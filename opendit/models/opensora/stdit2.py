@@ -28,7 +28,7 @@ from opendit.core.parallel_mgr import (
 from opendit.models.opensora.ckpt_io import load_checkpoint
 from opendit.models.opensora.embed import CaptionEmbedder, PatchEmbed3D, TimestepEmbedder, get_2d_sincos_pos_embed
 from opendit.models.opensora.stdit import approx_gelu, t2i_modulate
-from opendit.modules.attn import Attention, MultiHeadCrossAttention
+from opendit.modules.attn import MultiHeadCrossAttention, SpatialAttention, TemporalAttention
 from opendit.modules.layers import get_layernorm
 
 
@@ -177,7 +177,7 @@ class STDiT2Block(nn.Module):
 
         # spatial branch
         self.norm1 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
-        self.attn = Attention(
+        self.attn = SpatialAttention(
             hidden_size,
             num_heads=num_heads,
             qkv_bias=True,
@@ -198,7 +198,7 @@ class STDiT2Block(nn.Module):
 
         # temporal branch
         self.norm_temp = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)  # new
-        self.attn_temp = Attention(
+        self.attn_temp = TemporalAttention(
             hidden_size,
             num_heads=num_heads,
             qkv_bias=True,
@@ -279,7 +279,7 @@ class STDiT2Block(nn.Module):
             x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=True)
 
         x_t = rearrange(x_m, "B (T S) C -> (B S) T C", T=T, S=S)
-        x_t = self.attn_temp(x_t)
+        x_t = self.attn_temp(x_t, timestep=timestep)
         x_t = rearrange(x_t, "(B S) T C -> B (T S) C", T=T, S=S)
 
         if is_sequence_parallelism_enable():
@@ -413,7 +413,7 @@ class STDiT2(PreTrainedModel):
         drop_path = [x.item() for x in torch.linspace(0, config.drop_path, config.depth)]
         from rotary_embedding_torch import RotaryEmbedding
 
-        self.rope = RotaryEmbedding(dim=self.hidden_size // self.num_heads)  # new
+        self.rope = RotaryEmbedding(dim=self.hidden_size // self.num_heads, seq_before_head_dim=True)  # new
         self.blocks = nn.ModuleList(
             [
                 STDiT2Block(

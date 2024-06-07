@@ -11,9 +11,9 @@ from torch.distributed import ProcessGroup
 
 from opendit.core.comm import AllGather, AsyncAllGatherForTwo, all_to_all_comm
 
-COUNT = 0
 CROSS_SKIP = False
-LOCAL_SPATIAL_ATTN = True
+LOCAL_SPATIAL_ATTN = False
+TEMPORAL_SKIP = False
 
 
 class LlamaRMSNorm(nn.Module):
@@ -259,7 +259,7 @@ class Attention(nn.Module):
             self.rope = True
             self.rotary_emb = rope
 
-    def forward(self, x: torch.Tensor, timestep=None, H=None, W=None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, N, C = x.shape
         qkv = self.qkv(x)
         qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
@@ -276,27 +276,13 @@ class Attention(nn.Module):
         if self.enable_flashattn:
             from flash_attn import flash_attn_func
 
-            if self.if_skip(timestep):
-                func = lambda x: rearrange(
-                    x, "b (hh h ww w) hd d -> (b hh ww) (h w) hd d", hh=4, ww=4, w=W // 4, h=H // 4
-                )
-                q, k, v = map(func, (q, k, v))
-                x = flash_attn_func(
-                    q,
-                    k,
-                    v,
-                    dropout_p=self.attn_drop.p if self.training else 0.0,
-                    softmax_scale=self.scale,
-                )
-                x = rearrange(x, "(b hh ww) (h w) hd d -> b (hh h ww w) hd d", hh=4, ww=4, w=W // 4, h=H // 4)
-            else:
-                x = flash_attn_func(
-                    q,
-                    k,
-                    v,
-                    dropout_p=self.attn_drop.p if self.training else 0.0,
-                    softmax_scale=self.scale,
-                )
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                softmax_scale=self.scale,
+            )
         else:
             dtype = q.dtype
             q = q * self.scale
@@ -306,18 +292,6 @@ class Attention(nn.Module):
             attn = attn.to(dtype)  # cast back attn to original dtype
             attn = self.attn_drop(attn)
             x = attn @ v
-            # if N > 100:
-            #     import matplotlib.pyplot as plt
-            #     import numpy as np
-            #     attn = torch.mean(attn[0].float(), dim=0).cpu().numpy()
-            #     plt.figure(figsize=(8, 6))
-            #     plt.imshow(attn, cmap='hot', interpolation='nearest')
-            #     plt.colorbar()
-            #     plt.title(f'Attention Heatmap')
-            #     plt.xlabel('Key')
-            #     plt.ylabel('Query')
-            #     plt.savefig(f"./samples/attention_heatmap_{timestep}.png")
-            #     plt.close()
 
         x_output_shape = (B, N, C)
         if not self.enable_flashattn:
@@ -327,11 +301,173 @@ class Attention(nn.Module):
         x = self.proj_drop(x)
         return x
 
+
+class SpatialAttention(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        norm_layer: nn.Module = LlamaRMSNorm,
+        enable_flashattn: bool = False,
+        rope=None,
+    ) -> None:
+        super().__init__()
+        assert dim % num_heads == 0, "dim should be divisible by num_heads"
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim**-0.5
+        self.enable_flashattn = enable_flashattn
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+        self.rope = False
+        if rope is not None:
+            self.rope = True
+            self.rotary_emb = rope
+
+        self.count = 0
+
+    def forward(self, x: torch.Tensor, timestep=None, H=None, W=None) -> torch.Tensor:
+        B, N, C = x.shape
+        qkv = self.qkv(x)
+        qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
+        qkv = qkv.view(qkv_shape).permute(2, 0, 1, 3, 4)
+        q, k, v = qkv.unbind(0)
+        if self.rope:
+            q = self.rotary_emb(q)
+            k = self.rotary_emb(k)
+        q, k = self.q_norm(q), self.k_norm(k)
+
+        from flash_attn import flash_attn_func
+
+        if self.if_skip(timestep):
+            func = lambda x: rearrange(x, "b hd (hh h ww w) d -> (b hh ww) (h w) hd d", hh=2, ww=2, w=W // 2, h=H // 2)
+            q, k, v = map(func, (q, k, v))
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                softmax_scale=self.scale,
+            )
+            x = rearrange(x, "(b hh ww) (h w) hd d -> b (hh h ww w) hd d", hh=2, ww=2, w=W // 2, h=H // 2)
+        else:
+            x = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=self.attn_drop.p if self.training else 0.0,
+                softmax_scale=self.scale,
+            )
+
+        x_output_shape = (B, N, C)
+        x = x.reshape(x_output_shape)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
     @torch.compiler.disable
     def if_skip(self, timestep):
-        global COUNT
-        COUNT += 1
-        if LOCAL_SPATIAL_ATTN and timestep is not None and COUNT % 5 != 0 and timestep < 700:
+        self.count = (self.count + 1) % 100
+        if LOCAL_SPATIAL_ATTN and (timestep is not None) and (self.count % 2 != 0) and (timestep < 500):
+            return True
+        else:
+            return False
+
+
+class TemporalAttention(nn.Module):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 8,
+        qkv_bias: bool = False,
+        qk_norm: bool = False,
+        attn_drop: float = 0.0,
+        proj_drop: float = 0.0,
+        norm_layer: nn.Module = LlamaRMSNorm,
+        enable_flashattn: bool = False,
+        rope=None,
+    ) -> None:
+        super().__init__()
+        assert dim % num_heads == 0, "dim should be divisible by num_heads"
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+        self.scale = self.head_dim**-0.5
+        self.enable_flashattn = enable_flashattn
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.q_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.k_norm = norm_layer(self.head_dim) if qk_norm else nn.Identity()
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+
+        self.rope = False
+        if rope is not None:
+            self.rope = True
+            self.rotary_emb = rope
+
+        self.last_qk = None
+        self.count = 0
+
+    def forward(self, x: torch.Tensor, timestep=None, H=None, W=None) -> torch.Tensor:
+        B, N, C = x.shape
+        skip_temporal = self.if_skip(timestep)
+
+        if skip_temporal:
+            v = self.qkv.weight[-self.dim :](x)
+            v = v.view(B, N, self.num_heads, self.head_dim)
+            q, k = self.last_qk
+        else:
+            qkv = self.qkv(x)
+            qkv_shape = (B, N, 3, self.num_heads, self.head_dim)
+            qkv = qkv.view(qkv_shape).permute(2, 0, 1, 3, 4)
+            q, k, v = qkv.unbind(0)
+            if self.rope:
+                q = self.rotary_emb(q)
+                k = self.rotary_emb(k)
+            q, k = self.q_norm(q), self.k_norm(k)
+
+        from flash_attn import flash_attn_func
+
+        x = flash_attn_func(
+            q,
+            k,
+            v,
+            dropout_p=self.attn_drop.p if self.training else 0.0,
+            softmax_scale=self.scale,
+        )
+
+        if not skip_temporal:
+            self.set_last_qk(q, k)
+
+        x_output_shape = (B, N, C)
+        x = x.reshape(x_output_shape)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+    @torch.compiler.disable
+    def set_last_qk(self, q, k):
+        self.last_qk = (q, k)
+
+    @torch.compiler.disable
+    def if_skip(self, timestep):
+        self.count = (self.count + 1) % 100
+        threshold = 500
+        gap = 2
+        if TEMPORAL_SKIP and (timestep is not None) and (self.count % gap != 0) and (timestep < threshold):
             return True
         else:
             return False
