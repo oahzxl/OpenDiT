@@ -11,9 +11,19 @@ from torch.distributed import ProcessGroup
 
 from opendit.core.comm import AllGather, AsyncAllGatherForTwo, all_to_all_comm
 
-CROSS_SKIP = False
-LOCAL_SPATIAL_ATTN = False
-TEMPORAL_SKIP = False
+STEPS = 100
+
+CROSS_SKIP = True
+CROSS_THRESHOLD = 700
+CROSS_GAP = 5
+
+SPATIAL_SKIP = True
+SPTIAL_THRESHOLD = 700
+SPATIAL_GAP = 5
+
+TEMPORAL_SKIP = True
+TEMPROAL_THRESHOLD = 700
+TEMPORAL_GAP = 5
 
 
 class LlamaRMSNorm(nn.Module):
@@ -351,7 +361,8 @@ class SpatialAttention(nn.Module):
         from flash_attn import flash_attn_func
 
         if self.if_skip(timestep):
-            func = lambda x: rearrange(x, "b hd (hh h ww w) d -> (b hh ww) (h w) hd d", hh=2, ww=2, w=W // 2, h=H // 2)
+            # func = lambda x: rearrange(x, "b (hh h ww w) hd d -> (b hh ww) (h w) hd d", hh=2, ww=2, w=W // 2, h=H // 2)
+            func = lambda x: rearrange(x, "b (s ss) hd d -> (b s) ss hd d", s=2)  # will crash if s > 2
             q, k, v = map(func, (q, k, v))
             x = flash_attn_func(
                 q,
@@ -360,7 +371,8 @@ class SpatialAttention(nn.Module):
                 dropout_p=self.attn_drop.p if self.training else 0.0,
                 softmax_scale=self.scale,
             )
-            x = rearrange(x, "(b hh ww) (h w) hd d -> b (hh h ww w) hd d", hh=2, ww=2, w=W // 2, h=H // 2)
+            # x = rearrange(x, "(b hh ww) (h w) hd d -> b (hh h ww w) hd d", hh=2, ww=2, w=W // 2, h=H // 2)
+            x = rearrange(x, "(b s) ss hd d -> b (s ss) hd d", s=2)
         else:
             x = flash_attn_func(
                 q,
@@ -378,10 +390,16 @@ class SpatialAttention(nn.Module):
 
     @torch.compiler.disable
     def if_skip(self, timestep):
-        self.count = (self.count + 1) % 100
-        if LOCAL_SPATIAL_ATTN and (timestep is not None) and (self.count % 2 != 0) and (timestep < 500):
+        if (
+            SPATIAL_SKIP
+            and (timestep is not None)
+            and (self.count % SPATIAL_GAP != 0)
+            and (timestep < SPTIAL_THRESHOLD)
+        ):
+            self.count = (self.count + 1) % STEPS
             return True
         else:
+            self.count = (self.count + 1) % STEPS
             return False
 
 
@@ -426,7 +444,7 @@ class TemporalAttention(nn.Module):
         skip_temporal = self.if_skip(timestep)
 
         if skip_temporal:
-            v = self.qkv.weight[-self.dim :](x)
+            v = F.linear(x, self.qkv.weight[-self.dim :], self.qkv.bias[-self.dim :])
             v = v.view(B, N, self.num_heads, self.head_dim)
             q, k = self.last_qk
         else:
@@ -464,12 +482,16 @@ class TemporalAttention(nn.Module):
 
     @torch.compiler.disable
     def if_skip(self, timestep):
-        self.count = (self.count + 1) % 100
-        threshold = 500
-        gap = 2
-        if TEMPORAL_SKIP and (timestep is not None) and (self.count % gap != 0) and (timestep < threshold):
+        if (
+            TEMPORAL_SKIP
+            and (timestep is not None)
+            and (self.count % TEMPORAL_GAP != 0)
+            and (timestep < TEMPROAL_THRESHOLD)
+        ):
+            self.count = (self.count + 1) % STEPS
             return True
         else:
+            self.count = (self.count + 1) % STEPS
             return False
 
 
@@ -510,10 +532,11 @@ class MultiHeadCrossAttention(nn.Module):
 
     @torch.compiler.disable
     def if_skip(self, timestep):
-        self.count += 1
-        if CROSS_SKIP and timestep is not None and timestep < 700 and self.count % 5 != 0:
+        if CROSS_SKIP and timestep is not None and timestep < CROSS_THRESHOLD and self.count % CROSS_GAP != 0:
+            self.count = (self.count + 1) % STEPS
             return True
         else:
+            self.count = (self.count + 1) % STEPS
             return False
 
     @torch.compiler.disable

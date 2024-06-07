@@ -83,9 +83,9 @@ def main(args):
         model_max_length=text_encoder.model_max_length,
         enable_sequence_parallelism=enable_sequence_parallelism,
     )
-    torch.compiler.reset()
-    torch._dynamo.config.accumulated_cache_size_limit = 256
-    model = torch.compile(model)
+    # torch.compiler.reset()
+    # torch._dynamo.config.accumulated_cache_size_limit = 256
+    # model = torch.compile(model)
     text_encoder.y_embedder = model.y_embedder  # hack for classifier-free guidance
 
     # 3.2. move to device & eval
