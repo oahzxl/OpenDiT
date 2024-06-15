@@ -21,3 +21,14 @@ scheduler_cfg_scale: 7.0
 # speedup
 enable_flashattn: True
 enable_t5_speedup: True
+
+# skip
+spatial_skip: True
+spatial_threshold: 700
+spatial_gap: 3
+temporal_skip: True
+temporal_threshold: 700
+temporal_gap: 5
+cross_skip: True
+cross_threshold: 700
+cross_gap: 5

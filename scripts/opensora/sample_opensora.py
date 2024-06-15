@@ -34,15 +34,15 @@ def main(args):
 
     set_skip_manager(
         steps=args.scheduler_num_sampling_steps,
-        cross_skip=True,
-        cross_threshold=700,
-        cross_gap=5,
-        spatial_skip=True,
-        spatial_threshold=700,
-        spatial_gap=3,
-        temporal_skip=True,
-        temporal_threshold=700,
-        temporal_gap=5,
+        cross_skip=args.cross_skip,
+        cross_threshold=args.cross_threshold,
+        cross_gap=args.cross_gap,
+        spatial_skip=args.spatial_skip,
+        spatial_threshold=args.spatial_threshold,
+        spatial_gap=args.spatial_gap,
+        temporal_skip=args.temporal_skip,
+        temporal_threshold=args.temporal_threshold,
+        temporal_gap=args.temporal_gap,
     )
 
     # ======================================================
@@ -200,6 +200,17 @@ if __name__ == "__main__":
     # speedup
     parser.add_argument("--enable_flashattn", action="store_true", help="Enable flashattn kernel")
     parser.add_argument("--enable_t5_speedup", action="store_true", help="Enable t5 speedup")
+
+    # skip
+    parser.add_argument("--spatial_skip", action="store_true", help="Enable spatial attention skip")
+    parser.add_argument("--spatial_threshold", type=int, default=700, help="Spatial attention threshold")
+    parser.add_argument("--spatial_gap", type=int, default=3, help="Spatial attention gap")
+    parser.add_argument("--temporal_skip", action="store_true", help="Enable temporal attention skip")
+    parser.add_argument("--temporal_threshold", type=int, default=700, help="Temporal attention threshold")
+    parser.add_argument("--temporal_gap", type=int, default=5, help="Temporal attention gap")
+    parser.add_argument("--cross_skip", action="store_true", help="Enable cross attention skip")
+    parser.add_argument("--cross_threshold", type=int, default=700, help="Cross attention threshold")
+    parser.add_argument("--cross_gap", type=int, default=5, help="Cross attention gap")
 
     args = parser.parse_args()
     config_args = OmegaConf.load(args.config)
