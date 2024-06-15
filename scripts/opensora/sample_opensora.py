@@ -29,12 +29,8 @@ def main(args):
 
         if coordinator.world_size > 1:
             set_parallel_manager(1, coordinator.world_size, dp_axis=0, sp_axis=1)
-            enable_sequence_parallelism = True
-        else:
-            enable_sequence_parallelism = False
     else:
         use_dist = False
-        enable_sequence_parallelism = False
 
     set_skip_manager(
         steps=args.scheduler_num_sampling_steps,
@@ -94,7 +90,6 @@ def main(args):
         in_channels=vae.out_channels,
         caption_channels=text_encoder.output_dim,
         model_max_length=text_encoder.model_max_length,
-        enable_sequence_parallelism=enable_sequence_parallelism,
     )
     # torch.compiler.reset()
     # torch._dynamo.config.accumulated_cache_size_limit = 256
