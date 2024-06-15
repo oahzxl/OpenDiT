@@ -2,7 +2,10 @@
 pip install -e .
 
 ## Run
-bash scripts/opensora/sample_opensora.sh
+normal:
+torchrun --standalone --nproc_per_node=1 scripts/opensora/sample_opensora.py --config configs/opensora/sample.yaml
+skip:
+torchrun --standalone --nproc_per_node=1 scripts/opensora/sample_opensora.py --config configs/opensora/sample_skip.yaml
 
 ## Description
 Main code modification is in opendit/modules/attn.py
