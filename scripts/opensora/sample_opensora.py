@@ -7,11 +7,12 @@ import colossalai
 import torch
 import torch._dynamo.config
 from colossalai.cluster import DistCoordinator
+from omegaconf import OmegaConf
 
 from opendit.core.parallel_mgr import set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.opensora import IDDPM, STDiT2_XL_2, T5Encoder, VideoAutoencoderKL, save_sample, text_preprocessing
-from opendit.utils.utils import set_seed, str_to_dtype
+from opendit.utils.utils import merge_args, set_seed, str_to_dtype
 
 
 def main(args):
@@ -154,9 +155,6 @@ def main(args):
         for k in range(args.num_samples):
             sample_idx = old_sample_idx
 
-            # Skip if the sample already exists
-            # This is useful for resuming sampling VBench
-
             # sampling
             z = torch.randn(len(batch_prompts), vae.out_channels, *latent_size, device=device, dtype=dtype)
             samples = scheduler.sample(
@@ -182,6 +180,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default=None)
 
     # sample
     parser.add_argument("--num_frames", type=int, default=16)
@@ -208,4 +207,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable_t5_speedup", action="store_true", help="Enable t5 speedup")
 
     args = parser.parse_args()
+    config_args = OmegaConf.load(args.config)
+    args = merge_args(args, config_args)
+
     main(args)
