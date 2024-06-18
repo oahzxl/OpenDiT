@@ -19,9 +19,9 @@ class ParallelManager(ProcessGroupMesh):
         self.enable_sp = sp_size > 1
 
 
-def set_parallel_manager(dp_size, sp_size, dp_axis, sp_axis):
+def set_parallel_manager(dp_size, sp_size):
     global PARALLEL_MANAGER
-    PARALLEL_MANAGER = ParallelManager(dp_size, sp_size, dp_axis, sp_axis)
+    PARALLEL_MANAGER = ParallelManager(dp_size, sp_size, 0, 1)
 
 
 def get_data_parallel_group():
