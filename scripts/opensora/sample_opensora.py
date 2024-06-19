@@ -11,7 +11,6 @@
 import argparse
 import os
 import time
-from pprint import pformat
 
 import colossalai
 import torch
@@ -40,7 +39,7 @@ from opendit.models.opensora.inference_utils import (
 )
 from opendit.models.opensora.rflow import RFLOW
 from opendit.models.opensora.stdit3 import STDiT3_XL_2
-from opendit.models.opensora.text_encoder import T5Embedder, text_preprocessing
+from opendit.models.opensora.text_encoder import T5Encoder, text_preprocessing
 from opendit.models.opensora.vae import OpenSoraVAE_V1_2
 from opendit.utils.utils import (
     all_exists,
@@ -78,8 +77,8 @@ def main(args):
 
     # == init logger ==
     logger = create_logger()
-    logger.info("Inference configuration:\n %s", pformat(cfg.to_dict()))
-    verbose = cfg.get("verbose", 1)
+    logger.info(f"Inference configuration: {args}\n")
+    verbose = args.verbose
     progress_wrap = tqdm if verbose == 1 else (lambda x: x)
 
     # ======================================================
@@ -87,7 +86,7 @@ def main(args):
     # ======================================================
     logger.info("Building models...")
     # == build text-encoder and vae ==
-    text_encoder = T5Embedder(from_pretrained="DeepFloyd/t5-v1_1-xxl", model_max_length=300, device=device)
+    text_encoder = T5Encoder(from_pretrained="DeepFloyd/t5-v1_1-xxl", model_max_length=300, device=device)
     vae = (
         OpenSoraVAE_V1_2(
             from_pretrained="hpcai-tech/OpenSora-VAE-v1.2",
@@ -137,22 +136,19 @@ def main(args):
     # ======================================================
     # == load prompts ==
     prompts = args.prompt
-    start_idx = args.start_index
     if prompts is None:
-        if args.prompt_path is not None:
-            prompts = load_prompts(args.prompt_path, start_idx, args.end_index)
-        else:
-            prompts = [args.prompt_generator] * 1_000_000  # endless loop
+        assert args.prompt_path is not None
+        prompts = load_prompts(args.prompt_path)
 
     # == prepare reference ==
-    reference_path = cfg.get("reference_path", [""] * len(prompts))
-    mask_strategy = cfg.get("mask_strategy", [""] * len(prompts))
+    reference_path = args.reference_path if args.reference_path is not None else [""] * len(prompts)
+    mask_strategy = args.mask_strategy if args.mask_strategy is not None else [""] * len(prompts)
     assert len(reference_path) == len(prompts), "Length of reference must be the same as prompts"
     assert len(mask_strategy) == len(prompts), "Length of mask_strategy must be the same as prompts"
 
     # == prepare arguments ==
     fps = args.fps
-    save_fps = args.save_fps
+    save_fps = fps // args.frame_interval
     multi_resolution = args.multi_resolution
     batch_size = args.batch_size
     num_sample = args.num_sample
@@ -161,10 +157,9 @@ def main(args):
     condition_frame_edit = args.condition_frame_edit
     align = args.align
 
-    save_dir = cfg.save_dir
+    save_dir = args.save_dir
     os.makedirs(save_dir, exist_ok=True)
-    sample_name = cfg.get("sample_name", None)
-    prompt_as_path = cfg.get("prompt_as_path", False)
+    prompt_as_path = args.prompt_as_path
 
     # == Iter over all samples ==
     for i in progress_wrap(range(0, len(prompts), batch_size)):
@@ -191,8 +186,7 @@ def main(args):
             save_paths = [
                 get_save_path_name(
                     save_dir,
-                    sample_name=sample_name,
-                    sample_idx=start_idx + idx,
+                    sample_idx=idx,
                     prompt=original_batch_prompts[idx],
                     prompt_as_path=prompt_as_path,
                     num_sample=num_sample,
@@ -318,38 +312,27 @@ def main(args):
                     if save_path.endswith(".mp4") and args.watermark:
                         time.sleep(1)  # prevent loading previous generated video
                         add_watermark(save_path)
-        start_idx += len(batch_prompts)
     logger.info("Inference finished.")
-    logger.info("Saved %s samples to %s", start_idx, save_dir)
+    logger.info("Saved samples to %s", save_dir)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # general
-    parser.add_argument("--seed", default=None, type=int, help="seed for reproducibility")
-    parser.add_argument(
-        "--ckpt-path",
-        default=None,
-        type=str,
-        help="path to model ckpt; will overwrite cfg.model.from_pretrained if specified",
-    )
-    parser.add_argument("--batch-size", default=None, type=int, help="batch size")
-    parser.add_argument("--outputs", default=None, type=str, help="the dir to save model weights")
+    parser.add_argument("--config", default=None, type=str, help="path to config yaml")
+    parser.add_argument("--seed", default=1024, type=int, help="seed for reproducibility")
+    parser.add_argument("--batch-size", default=1, type=int, help="batch size")
     parser.add_argument("--flash-attn", action="store_true", help="enable flash attention")
-    parser.add_argument("--layernorm-kernel", action="store_true", help="enable layernorm kernel")
-    parser.add_argument("--resolution", default=None, type=str, help="multi resolution")
-    parser.add_argument("--data-path", default=None, type=str, help="path to data csv")
-    parser.add_argument("--dtype", default=None, type=str, help="data type")
+    parser.add_argument("--resolution", default=None, type=str, help="resolution")
+    parser.add_argument("--multi-resolution", default=None, type=str, help="multi resolution")
+    parser.add_argument("--dtype", default="bf16", type=str, help="data type")
 
     # output
-    parser.add_argument("--save-dir", default=None, type=str, help="path to save generated samples")
-    parser.add_argument("--sample-name", default=None, type=str, help="sample name, default is sample_idx")
-    parser.add_argument("--start-index", default=None, type=int, help="start index for sample name")
-    parser.add_argument("--end-index", default=None, type=int, help="end index for sample name")
-    parser.add_argument("--num-sample", default=None, type=int, help="number of samples to generate for one prompt")
+    parser.add_argument("--save-dir", default="./samples/opensora", type=str, help="path to save generated samples")
+    parser.add_argument("--num-sample", default=1, type=int, help="number of samples to generate for one prompt")
     parser.add_argument("--prompt-as-path", action="store_true", help="use prompt as path to save samples")
-    parser.add_argument("--verbose", default=None, type=int, help="verbose level")
+    parser.add_argument("--verbose", default=2, type=int, help="verbose level")
 
     # prompt
     parser.add_argument("--prompt-path", default=None, type=str, help="path to prompt txt file")
@@ -358,20 +341,21 @@ if __name__ == "__main__":
 
     # image/video
     parser.add_argument("--num-frames", default=None, type=str, help="number of frames")
-    parser.add_argument("--fps", default=None, type=int, help="fps")
-    parser.add_argument("--save-fps", default=None, type=int, help="save fps")
+    parser.add_argument("--fps", default=24, type=int, help="fps")
     parser.add_argument("--image-size", default=None, type=int, nargs=2, help="image size")
-    parser.add_argument("--frame-interval", default=None, type=int, help="frame interval")
+    parser.add_argument("--frame-interval", default=1, type=int, help="frame interval")
     parser.add_argument("--aspect-ratio", default=None, type=str, help="aspect ratio (h:w)")
     parser.add_argument("--watermark", action="store_true", help="watermark video")
 
     # hyperparameters
-    parser.add_argument("--num-sampling-steps", default=None, type=int, help="sampling steps")
-    parser.add_argument("--cfg-scale", default=None, type=float, help="balance between cond & uncond")
+    parser.add_argument("--num-sampling-steps", default=30, type=int, help="sampling steps")
+    parser.add_argument("--cfg-scale", default=7.0, type=float, help="balance between cond & uncond")
 
     # reference
-    parser.add_argument("--loop", default=None, type=int, help="loop")
-    parser.add_argument("--condition-frame-length", default=None, type=int, help="condition frame length")
+    parser.add_argument("--loop", default=1, type=int, help="loop")
+    parser.add_argument("--align", default=None, type=int, help="align")
+    parser.add_argument("--condition-frame-length", default=5, type=int, help="condition frame length")
+    parser.add_argument("--condition-frame-edit", default=0.0, type=float, help="condition frame edit")
     parser.add_argument("--reference-path", default=None, type=str, nargs="+", help="reference path")
     parser.add_argument("--mask-strategy", default=None, type=str, nargs="+", help="mask strategy")
     parser.add_argument("--aes", default=None, type=float, help="aesthetic score")

@@ -199,7 +199,7 @@ class RFLOW:
             noise_added = noise_added | (mask == 1)
 
         progress_wrap = tqdm if progress else (lambda x: x)
-        for i, t in progress_wrap(enumerate(timesteps)):
+        for i, t in progress_wrap(list(enumerate(timesteps))):
             # mask for adding noise
             if mask is not None:
                 mask_t = mask * self.num_timesteps
