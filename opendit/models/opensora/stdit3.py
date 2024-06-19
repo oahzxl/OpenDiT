@@ -2,15 +2,14 @@ import os
 
 import numpy as np
 import torch
-import torch.distributed as dist
 import torch.nn as nn
 from einops import rearrange
 from timm.models.layers import DropPath
 from timm.models.vision_transformer import Mlp
 from transformers import PretrainedConfig, PreTrainedModel
 
-from opendit.core.comm import gather_sequence, split_sequence
-from opendit.core.parallel_mgr import get_sequence_parallel_group
+from opendit.core.comm import all_to_all_comm, gather_sequence, split_sequence
+from opendit.core.parallel_mgr import enable_sequence_parallel, get_sequence_parallel_group, get_sequence_parallel_size
 
 from .modules import (
     Attention,
@@ -39,19 +38,16 @@ class STDiT3Block(nn.Module):
         qk_norm=False,
         temporal=False,
         enable_flash_attn=False,
-        enable_layernorm_kernel=False,
-        enable_sequence_parallelism=False,
     ):
         super().__init__()
         self.temporal = temporal
         self.hidden_size = hidden_size
         self.enable_flash_attn = enable_flash_attn
-        self.enable_sequence_parallelism = enable_sequence_parallelism
 
         attn_cls = Attention
         mha_cls = MultiHeadCrossAttention
 
-        self.norm1 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
+        self.norm1 = get_layernorm(hidden_size, eps=1e-6, affine=False)
         self.attn = attn_cls(
             hidden_size,
             num_heads=num_heads,
@@ -61,7 +57,7 @@ class STDiT3Block(nn.Module):
             enable_flash_attn=enable_flash_attn,
         )
         self.cross_attn = mha_cls(hidden_size, num_heads)
-        self.norm2 = get_layernorm(hidden_size, eps=1e-6, affine=False, use_kernel=enable_layernorm_kernel)
+        self.norm2 = get_layernorm(hidden_size, eps=1e-6, affine=False)
         self.mlp = Mlp(
             in_features=hidden_size, hidden_features=int(hidden_size * mlp_ratio), act_layer=approx_gelu, drop=0
         )
@@ -107,9 +103,13 @@ class STDiT3Block(nn.Module):
 
         # attention
         if self.temporal:
+            if enable_sequence_parallel():
+                x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=True)
             x_m = rearrange(x_m, "B (T S) C -> (B S) T C", T=T, S=S)
             x_m = self.attn(x_m)
             x_m = rearrange(x_m, "(B S) T C -> B (T S) C", T=T, S=S)
+            if enable_sequence_parallel():
+                x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=False)
         else:
             x_m = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
             x_m = self.attn(x_m)
@@ -147,6 +147,19 @@ class STDiT3Block(nn.Module):
 
         return x
 
+    def dynamic_switch(self, x, s, t, temporal_to_spatial: bool):
+        if temporal_to_spatial:
+            scatter_dim, gather_dim = 2, 1
+            new_s, new_t = s // get_sequence_parallel_size(), t * get_sequence_parallel_size()
+        else:
+            scatter_dim, gather_dim = 1, 2
+            new_s, new_t = s * get_sequence_parallel_size(), t // get_sequence_parallel_size()
+
+        x = rearrange(x, "b (t s) d -> b t s d", t=t, s=s)
+        x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=scatter_dim, gather_dim=gather_dim)
+        x = rearrange(x, "b t s d -> b (t s) d", t=new_t, s=new_s)
+        return x, new_s, new_t
+
 
 class STDiT3Config(PretrainedConfig):
     model_type = "STDiT3"
@@ -168,8 +181,6 @@ class STDiT3Config(PretrainedConfig):
         model_max_length=300,
         qk_norm=True,
         enable_flash_attn=False,
-        enable_layernorm_kernel=False,
-        enable_sequence_parallelism=False,
         only_train_temporal=False,
         freeze_y_embedder=False,
         skip_y_embedder=False,
@@ -190,8 +201,6 @@ class STDiT3Config(PretrainedConfig):
         self.model_max_length = model_max_length
         self.qk_norm = qk_norm
         self.enable_flash_attn = enable_flash_attn
-        self.enable_layernorm_kernel = enable_layernorm_kernel
-        self.enable_sequence_parallelism = enable_sequence_parallelism
         self.only_train_temporal = only_train_temporal
         self.freeze_y_embedder = freeze_y_embedder
         self.skip_y_embedder = skip_y_embedder
@@ -216,8 +225,6 @@ class STDiT3(PreTrainedModel):
         # computation related
         self.drop_path = config.drop_path
         self.enable_flash_attn = config.enable_flash_attn
-        self.enable_layernorm_kernel = config.enable_layernorm_kernel
-        self.enable_sequence_parallelism = config.enable_sequence_parallelism
 
         # input size related
         self.patch_size = config.patch_size
@@ -255,8 +262,6 @@ class STDiT3(PreTrainedModel):
                     drop_path=drop_path[i],
                     qk_norm=config.qk_norm,
                     enable_flash_attn=config.enable_flash_attn,
-                    enable_layernorm_kernel=config.enable_layernorm_kernel,
-                    enable_sequence_parallelism=config.enable_sequence_parallelism,
                 )
                 for i in range(config.depth)
             ]
@@ -273,8 +278,6 @@ class STDiT3(PreTrainedModel):
                     drop_path=drop_path[i],
                     qk_norm=config.qk_norm,
                     enable_flash_attn=config.enable_flash_attn,
-                    enable_layernorm_kernel=config.enable_layernorm_kernel,
-                    enable_sequence_parallelism=config.enable_sequence_parallelism,
                     # temporal
                     temporal=True,
                     rope=self.rope.rotate_queries_or_keys,
@@ -388,9 +391,11 @@ class STDiT3(PreTrainedModel):
         x = x + pos_emb
 
         # shard over the sequence dim if sp is enabled
-        if self.enable_sequence_parallelism:
-            x = split_sequence(x, get_sequence_parallel_group(), dim=2, grad_scale="down")
-            S = S // dist.get_world_size(get_sequence_parallel_group())
+        if enable_sequence_parallel():
+            x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down")
+            x_mask_org = x_mask
+            x_mask = split_sequence(x_mask, get_sequence_parallel_group(), dim=1, grad_scale="down")
+            T = T // get_sequence_parallel_size()
 
         x = rearrange(x, "B T S C -> B (T S) C", T=T, S=S)
 
@@ -399,11 +404,12 @@ class STDiT3(PreTrainedModel):
             x = auto_grad_checkpoint(spatial_block, x, y, t_mlp, y_lens, x_mask, t0_mlp, T, S)
             x = auto_grad_checkpoint(temporal_block, x, y, t_mlp, y_lens, x_mask, t0_mlp, T, S)
 
-        if self.enable_sequence_parallelism:
+        if enable_sequence_parallel():
             x = rearrange(x, "B (T S) C -> B T S C", T=T, S=S)
-            x = gather_sequence(x, get_sequence_parallel_group(), dim=2, grad_scale="up")
-            S = S * dist.get_world_size(get_sequence_parallel_group())
+            x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
+            T = T * get_sequence_parallel_size()
             x = rearrange(x, "B T S C -> B (T S) C", T=T, S=S)
+            x_mask = x_mask_org
 
         # === final layer ===
         x = self.final_layer(x, t, x_mask, t0, T, S)
