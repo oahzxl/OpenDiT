@@ -11,8 +11,10 @@ import argparse
 import math
 import os
 
+import colossalai
 import imageio
 import torch
+from colossalai.cluster import DistCoordinator
 from diffusers.schedulers import (
     DDIMScheduler,
     DDPMScheduler,
@@ -29,10 +31,9 @@ from omegaconf import OmegaConf
 from torchvision.utils import save_image
 from transformers import T5EncoderModel, T5Tokenizer
 
+from opendit.core.parallel_mgr import set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
-from opendit.models.opensora_plan import VideoGenPipeline
-from opendit.models.opensora_plan.ae import ae_stride_config, getae_wrapper
-from opendit.models.opensora_plan.latte import LatteT2V
+from opendit.models.opensora_plan import LatteT2V, VideoGenPipeline, ae_stride_config, getae_wrapper
 from opendit.utils.utils import merge_args, set_seed
 
 
@@ -59,7 +60,14 @@ def save_video_grid(video, nrow=None):
 def main(args):
     set_seed(42)
     torch.set_grad_enabled(False)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
+
+    # == init distributed env ==
+    colossalai.launch_from_torch({})
+    coordinator = DistCoordinator()
+    set_parallel_manager(1, coordinator.world_size)
+    device = f"cuda:{torch.cuda.current_device()}"
 
     set_skip_manager(
         steps=args.num_sampling_steps,

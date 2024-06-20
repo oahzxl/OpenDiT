@@ -32,6 +32,8 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import rearrange, repeat
 from torch import nn
 
+from opendit.core.comm import all_to_all_comm, gather_sequence, split_sequence
+from opendit.core.parallel_mgr import enable_sequence_parallel, get_sequence_parallel_group
 from opendit.core.skip_mgr import (
     get_cross_gap,
     get_cross_skip,
@@ -739,12 +741,19 @@ class BasicTransformerBlock_(nn.Module):
             if self.pos_embed is not None:
                 norm_hidden_states = self.pos_embed(norm_hidden_states)
 
+            if enable_sequence_parallel():
+                norm_hidden_states = self.dynamic_switch(norm_hidden_states, temporal_to_spatial=True)
+
             attn_output = self.attn1(
                 norm_hidden_states,
                 encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
                 attention_mask=attention_mask,
                 **cross_attention_kwargs,
             )
+
+            if enable_sequence_parallel():
+                attn_output = self.dynamic_switch(attn_output, temporal_to_spatial=False)
+
             if self.use_ada_layer_norm_zero:
                 attn_output = gate_msa.unsqueeze(1) * attn_output
             elif self.use_ada_layer_norm_single:
@@ -823,6 +832,14 @@ class BasicTransformerBlock_(nn.Module):
             hidden_states = hidden_states.squeeze(1)
 
         return hidden_states
+
+    def dynamic_switch(self, x, temporal_to_spatial: bool):
+        if temporal_to_spatial:
+            scatter_dim, gather_dim = 0, 1
+        else:
+            scatter_dim, gather_dim = 1, 0
+        x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=scatter_dim, gather_dim=gather_dim)
+        return x
 
 
 class AdaLayerNormSingle(nn.Module):
@@ -1238,6 +1255,17 @@ class LatteT2V(ModelMixin, ConfigMixin):
         timestep_spatial = repeat(timestep, "b d -> (b f) d", f=frame + use_image_num).contiguous()
         timestep_temp = repeat(timestep, "b d -> (b p) d", p=num_patches).contiguous()
 
+        if enable_sequence_parallel():
+            hidden_states = self.split_from_second_dim(hidden_states, input_batch_size)
+            encoder_hidden_states_spatial = self.split_from_second_dim(encoder_hidden_states_spatial, input_batch_size)
+            timestep_spatial = self.split_from_second_dim(timestep_spatial, input_batch_size)
+            # timestep_temp = self.split_from_second_dim(timestep_temp, input_batch_size)
+            temp_pos_embed = split_sequence(
+                self.temp_pos_embed, get_sequence_parallel_group(), dim=1, grad_scale="down"
+            )
+        else:
+            temp_pos_embed = self.temp_pos_embed
+
         for i, (spatial_block, temp_block) in enumerate(zip(self.transformer_blocks, self.temporal_transformer_blocks)):
             if self.training and self.gradient_checkpointing:
                 hidden_states = torch.utils.checkpoint.checkpoint(
@@ -1260,7 +1288,7 @@ class LatteT2V(ModelMixin, ConfigMixin):
                         hidden_states_image = hidden_states[:, frame:, ...]
 
                         if i == 0:
-                            hidden_states_video = hidden_states_video + self.temp_pos_embed
+                            hidden_states_video = hidden_states_video + temp_pos_embed
 
                         hidden_states_video = torch.utils.checkpoint.checkpoint(
                             temp_block,
@@ -1281,7 +1309,7 @@ class LatteT2V(ModelMixin, ConfigMixin):
 
                     else:
                         if i == 0:
-                            hidden_states = hidden_states + self.temp_pos_embed
+                            hidden_states = hidden_states + temp_pos_embed
 
                         hidden_states = torch.utils.checkpoint.checkpoint(
                             temp_block,
@@ -1336,7 +1364,7 @@ class LatteT2V(ModelMixin, ConfigMixin):
 
                     else:
                         if i == 0 and frame > 1:
-                            hidden_states = hidden_states + self.temp_pos_embed
+                            hidden_states = hidden_states + temp_pos_embed
 
                         hidden_states = temp_block(
                             hidden_states,
@@ -1352,6 +1380,9 @@ class LatteT2V(ModelMixin, ConfigMixin):
                         hidden_states = rearrange(
                             hidden_states, "(b t) f d -> (b f) t d", b=input_batch_size
                         ).contiguous()
+
+        if enable_sequence_parallel():
+            hidden_states = self.gather_from_second_dim(hidden_states, input_batch_size)
 
         if self.is_input_patches:
             if self.config.norm_type != "ada_norm_single":
@@ -1389,3 +1420,15 @@ class LatteT2V(ModelMixin, ConfigMixin):
     def get_1d_sincos_temp_embed(self, embed_dim, length):
         pos = torch.arange(0, length).unsqueeze(1)
         return get_1d_sincos_pos_embed_from_grid(embed_dim, pos)
+
+    def split_from_second_dim(self, x, batch_size):
+        x = x.view(batch_size, -1, *x.shape[1:])
+        x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down")
+        x = x.reshape(-1, *x.shape[2:])
+        return x
+
+    def gather_from_second_dim(self, x, batch_size):
+        x = x.view(batch_size, -1, *x.shape[1:])
+        x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
+        x = x.reshape(-1, *x.shape[2:])
+        return x
