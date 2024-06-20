@@ -24,4 +24,4 @@ prompt: [
 ]
 
 # speedup
-# enable_flashattn: True
+# flash_attn: True

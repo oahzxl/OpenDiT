@@ -10,6 +10,7 @@ from transformers import PretrainedConfig, PreTrainedModel
 
 from opendit.core.comm import all_to_all_comm, gather_sequence, split_sequence
 from opendit.core.parallel_mgr import enable_sequence_parallel, get_sequence_parallel_group, get_sequence_parallel_size
+from opendit.core.skip_mgr import enable_skip, if_skip_cross, if_skip_spatial, if_skip_temporal
 
 from .modules import (
     Attention,
@@ -38,6 +39,7 @@ class STDiT3Block(nn.Module):
         qk_norm=False,
         temporal=False,
         enable_flash_attn=False,
+        block_idx=None,
     ):
         super().__init__()
         self.temporal = temporal
@@ -64,6 +66,13 @@ class STDiT3Block(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0.0 else nn.Identity()
         self.scale_shift_table = nn.Parameter(torch.randn(6, hidden_size) / hidden_size**0.5)
 
+        # fast video diffusion
+        self.block_idx = block_idx
+        self.attn_count = 0
+        self.last_attn = None
+        self.cross_count = 0
+        self.last_cross = None
+
     def t_mask_select(self, x_mask, x, masked_x, T, S):
         # x: [B, (T, S), C]
         # mased_x: [B, (T, S), C]
@@ -84,6 +93,7 @@ class STDiT3Block(nn.Module):
         t0=None,  # t with timestamp=0
         T=None,  # number of frames
         S=None,  # number of pixel patches
+        timestep=None,
     ):
         # prepare modulate parameters
         B, N, C = x.shape
@@ -95,37 +105,55 @@ class STDiT3Block(nn.Module):
                 self.scale_shift_table[None] + t0.reshape(B, 6, -1)
             ).chunk(6, dim=1)
 
-        # modulate (attention)
-        x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa)
-        if x_mask is not None:
-            x_m_zero = t2i_modulate(self.norm1(x), shift_msa_zero, scale_msa_zero)
-            x_m = self.t_mask_select(x_mask, x_m, x_m_zero, T, S)
-
-        # attention
         if self.temporal:
-            if enable_sequence_parallel():
-                x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=True)
-            x_m = rearrange(x_m, "B (T S) C -> (B S) T C", T=T, S=S)
-            x_m = self.attn(x_m)
-            x_m = rearrange(x_m, "(B S) T C -> B (T S) C", T=T, S=S)
-            if enable_sequence_parallel():
-                x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=False)
+            skip_attn, self.attn_count = if_skip_temporal(int(timestep[0]), self.attn_count)
         else:
-            x_m = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
-            x_m = self.attn(x_m)
-            x_m = rearrange(x_m, "(B T) S C -> B (T S) C", T=T, S=S)
+            skip_attn, self.attn_count = if_skip_spatial(int(timestep[0]), self.attn_count, self.block_idx)
 
-        # modulate (attention)
-        x_m_s = gate_msa * x_m
-        if x_mask is not None:
-            x_m_s_zero = gate_msa_zero * x_m
-            x_m_s = self.t_mask_select(x_mask, x_m_s, x_m_s_zero, T, S)
+        if skip_attn:
+            x_m_s = self.last_attn
+        else:
+            # modulate (attention)
+            x_m = t2i_modulate(self.norm1(x), shift_msa, scale_msa)
+            if x_mask is not None:
+                x_m_zero = t2i_modulate(self.norm1(x), shift_msa_zero, scale_msa_zero)
+                x_m = self.t_mask_select(x_mask, x_m, x_m_zero, T, S)
+
+            # attention
+            if self.temporal:
+                if enable_sequence_parallel():
+                    x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=True)
+                x_m = rearrange(x_m, "B (T S) C -> (B S) T C", T=T, S=S)
+                x_m = self.attn(x_m)
+                x_m = rearrange(x_m, "(B S) T C -> B (T S) C", T=T, S=S)
+                if enable_sequence_parallel():
+                    x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=False)
+            else:
+                x_m = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
+                x_m = self.attn(x_m)
+                x_m = rearrange(x_m, "(B T) S C -> B (T S) C", T=T, S=S)
+
+            # modulate (attention)
+            x_m_s = gate_msa * x_m
+            if x_mask is not None:
+                x_m_s_zero = gate_msa_zero * x_m
+                x_m_s = self.t_mask_select(x_mask, x_m_s, x_m_s_zero, T, S)
+
+            if enable_skip():
+                self.last_attn = x_m_s
 
         # residual
         x = x + self.drop_path(x_m_s)
 
         # cross attention
-        x = x + self.cross_attn(x, y, mask)
+        skip_cross, self.cross_count = if_skip_cross(int(timestep[0]), self.cross_count)
+        if skip_cross:
+            x = x + self.last_cross
+        else:
+            x_cross = self.cross_attn(x, y, mask)
+            if enable_skip():
+                self.last_cross = x_cross
+            x = x + x_cross
 
         # modulate (MLP)
         x_m = t2i_modulate(self.norm2(x), shift_mlp, scale_mlp)
@@ -262,6 +290,7 @@ class STDiT3(PreTrainedModel):
                     drop_path=drop_path[i],
                     qk_norm=config.qk_norm,
                     enable_flash_attn=config.enable_flash_attn,
+                    block_idx=i,
                 )
                 for i in range(config.depth)
             ]
@@ -281,6 +310,7 @@ class STDiT3(PreTrainedModel):
                     # temporal
                     temporal=True,
                     rope=self.rope.rotate_queries_or_keys,
+                    block_idx=i,
                 )
                 for i in range(config.depth)
             ]
@@ -393,22 +423,20 @@ class STDiT3(PreTrainedModel):
         # shard over the sequence dim if sp is enabled
         if enable_sequence_parallel():
             x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down")
+            T = T // get_sequence_parallel_size()
             x_mask_org = x_mask
             x_mask = split_sequence(x_mask, get_sequence_parallel_group(), dim=1, grad_scale="down")
-            T = T // get_sequence_parallel_size()
 
         x = rearrange(x, "B T S C -> B (T S) C", T=T, S=S)
 
         # === blocks ===
         for spatial_block, temporal_block in zip(self.spatial_blocks, self.temporal_blocks):
-            x = auto_grad_checkpoint(spatial_block, x, y, t_mlp, y_lens, x_mask, t0_mlp, T, S)
-            x = auto_grad_checkpoint(temporal_block, x, y, t_mlp, y_lens, x_mask, t0_mlp, T, S)
+            x = auto_grad_checkpoint(spatial_block, x, y, t_mlp, y_lens, x_mask, t0_mlp, T, S, timestep)
+            x = auto_grad_checkpoint(temporal_block, x, y, t_mlp, y_lens, x_mask, t0_mlp, T, S, timestep)
 
         if enable_sequence_parallel():
-            x = rearrange(x, "B (T S) C -> B T S C", T=T, S=S)
             x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
             T = T * get_sequence_parallel_size()
-            x = rearrange(x, "B T S C -> B (T S) C", T=T, S=S)
             x_mask = x_mask_org
 
         # === final layer ===
