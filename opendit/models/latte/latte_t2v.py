@@ -32,7 +32,15 @@ from diffusers.utils.torch_utils import maybe_allow_in_graph
 from einops import rearrange, repeat
 from torch import nn
 
-from opendit.core.comm import all_to_all_comm, gather_sequence, split_sequence
+from opendit.core.comm import (
+    all_to_all_with_pad,
+    gather_sequence,
+    get_spatial_pad,
+    get_temporal_pad,
+    set_spatial_pad,
+    set_temporal_pad,
+    split_sequence,
+)
 from opendit.core.parallel_mgr import enable_sequence_parallel, get_sequence_parallel_group
 from opendit.core.skip_mgr import (
     get_cross_gap,
@@ -836,9 +844,20 @@ class BasicTransformerBlock_(nn.Module):
     def dynamic_switch(self, x, to_spatial_shard: bool):
         if to_spatial_shard:
             scatter_dim, gather_dim = 0, 1
+            scatter_pad = get_spatial_pad()
+            gather_pad = get_temporal_pad()
         else:
             scatter_dim, gather_dim = 1, 0
-        x = all_to_all_comm(x, get_sequence_parallel_group(), scatter_dim=scatter_dim, gather_dim=gather_dim)
+            scatter_pad = get_temporal_pad()
+            gather_pad = get_spatial_pad()
+        x = all_to_all_with_pad(
+            x,
+            get_sequence_parallel_group(),
+            scatter_dim=scatter_dim,
+            gather_dim=gather_dim,
+            scatter_pad=scatter_pad,
+            gather_pad=gather_pad,
+        )
         return x
 
 
@@ -1256,12 +1275,13 @@ class LatteT2V(ModelMixin, ConfigMixin):
         timestep_temp = repeat(timestep, "b d -> (b p) d", p=num_patches).contiguous()
 
         if enable_sequence_parallel():
+            set_temporal_pad(frame + use_image_num)
+            set_spatial_pad(num_patches)
             hidden_states = self.split_from_second_dim(hidden_states, input_batch_size)
             encoder_hidden_states_spatial = self.split_from_second_dim(encoder_hidden_states_spatial, input_batch_size)
             timestep_spatial = self.split_from_second_dim(timestep_spatial, input_batch_size)
-            # timestep_temp = self.split_from_second_dim(timestep_temp, input_batch_size)
             temp_pos_embed = split_sequence(
-                self.temp_pos_embed, get_sequence_parallel_group(), dim=1, grad_scale="down"
+                self.temp_pos_embed, get_sequence_parallel_group(), dim=1, grad_scale="down", pad=get_temporal_pad()
             )
         else:
             temp_pos_embed = self.temp_pos_embed
@@ -1423,12 +1443,12 @@ class LatteT2V(ModelMixin, ConfigMixin):
 
     def split_from_second_dim(self, x, batch_size):
         x = x.view(batch_size, -1, *x.shape[1:])
-        x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down")
+        x = split_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="down", pad=get_temporal_pad())
         x = x.reshape(-1, *x.shape[2:])
         return x
 
     def gather_from_second_dim(self, x, batch_size):
         x = x.view(batch_size, -1, *x.shape[1:])
-        x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up")
+        x = gather_sequence(x, get_sequence_parallel_group(), dim=1, grad_scale="up", pad=get_temporal_pad())
         x = x.reshape(-1, *x.shape[2:])
         return x

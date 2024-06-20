@@ -57,6 +57,7 @@ def main(args):
         spatial_skip=args.spatial_skip,
         spatial_threshold=args.spatial_threshold,
         spatial_gap=args.spatial_gap,
+        spatial_block=args.spatial_block,
         temporal_skip=args.temporal_skip,
         temporal_threshold=args.temporal_threshold,
         temporal_gap=args.temporal_gap,
@@ -199,12 +200,13 @@ def main(args):
             mask_feature=True,
             enable_vae_temporal_decoder=args.enable_vae_temporal_decoder,
         ).video
-        if videos.shape[1] == 1:
-            save_image(videos[0][0], args.save_img_path + prompt.replace(" ", "_") + ".png")
-        else:
-            imageio.mimwrite(
-                args.save_img_path + prompt.replace(" ", "_") + "_%04d" % args.run_time + ".mp4", videos[0], fps=8
-            )
+        if coordinator.is_master():
+            if videos.shape[1] == 1:
+                save_image(videos[0][0], args.save_img_path + prompt.replace(" ", "_") + ".png")
+            else:
+                imageio.mimwrite(
+                    args.save_img_path + prompt.replace(" ", "_") + "_%04d" % args.run_time + ".mp4", videos[0], fps=8
+                )
 
 
 if __name__ == "__main__":
@@ -233,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--spatial_skip", action="store_true", help="Enable spatial attention skip")
     parser.add_argument("--spatial_threshold", type=int, default=700, help="Spatial attention threshold")
     parser.add_argument("--spatial_gap", type=int, default=3, help="Spatial attention gap")
+    parser.add_argument("--spatial_block", type=int, nargs=2, default=[8, 25], help="Spatial attention block size")
     parser.add_argument("--temporal_skip", action="store_true", help="Enable temporal attention skip")
     parser.add_argument("--temporal_threshold", type=int, default=700, help="Temporal attention threshold")
     parser.add_argument("--temporal_gap", type=int, default=5, help="Temporal attention gap")

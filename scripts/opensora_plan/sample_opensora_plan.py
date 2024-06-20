@@ -46,7 +46,6 @@ def save_video_grid(video, nrow=None):
     padding = 1
     video_grid = torch.zeros((t, (padding + h) * nrow + padding, (padding + w) * ncol + padding, c), dtype=torch.uint8)
 
-    print(video_grid.shape)
     for i in range(b):
         r = i // ncol
         c = i % ncol
@@ -77,6 +76,7 @@ def main(args):
         spatial_skip=args.spatial_skip,
         spatial_threshold=args.spatial_threshold,
         spatial_gap=args.spatial_gap,
+        spatial_block=args.spatial_block,
         temporal_skip=args.temporal_skip,
         temporal_threshold=args.temporal_threshold,
         temporal_gap=args.temporal_gap,
@@ -181,26 +181,27 @@ def main(args):
     video_grids = torch.cat(video_grids, dim=0)
 
     # torchvision.io.write_video(args.save_img_path + '_%04d' % args.run_time + '-.mp4', video_grids, fps=6)
-    if args.force_images:
-        save_image(
-            video_grids / 255.0,
-            os.path.join(
-                args.save_img_path, f"{args.sample_method}_gs{args.guidance_scale}_s{args.num_sampling_steps}.{ext}"
-            ),
-            nrow=math.ceil(math.sqrt(len(video_grids))),
-            normalize=True,
-            value_range=(0, 1),
-        )
-    else:
-        video_grids = save_video_grid(video_grids)
-        imageio.mimwrite(
-            os.path.join(
-                args.save_img_path, f"{args.sample_method}_gs{args.guidance_scale}_s{args.num_sampling_steps}.{ext}"
-            ),
-            video_grids,
-            fps=args.fps,
-            quality=9,
-        )
+    if coordinator.is_master():
+        if args.force_images:
+            save_image(
+                video_grids / 255.0,
+                os.path.join(
+                    args.save_img_path, f"{args.sample_method}_gs{args.guidance_scale}_s{args.num_sampling_steps}.{ext}"
+                ),
+                nrow=math.ceil(math.sqrt(len(video_grids))),
+                normalize=True,
+                value_range=(0, 1),
+            )
+        else:
+            video_grids = save_video_grid(video_grids)
+            imageio.mimwrite(
+                os.path.join(
+                    args.save_img_path, f"{args.sample_method}_gs{args.guidance_scale}_s{args.num_sampling_steps}.{ext}"
+                ),
+                video_grids,
+                fps=args.fps,
+                quality=9,
+            )
 
     print("save path {}".format(args.save_img_path))
 
@@ -234,6 +235,7 @@ if __name__ == "__main__":
     parser.add_argument("--spatial_skip", action="store_true", help="Enable spatial attention skip")
     parser.add_argument("--spatial_threshold", type=int, default=700, help="Spatial attention threshold")
     parser.add_argument("--spatial_gap", type=int, default=3, help="Spatial attention gap")
+    parser.add_argument("--spatial_block", type=int, nargs=2, default=[8, 25], help="Spatial attention block size")
     parser.add_argument("--temporal_skip", action="store_true", help="Enable temporal attention skip")
     parser.add_argument("--temporal_threshold", type=int, default=700, help="Temporal attention threshold")
     parser.add_argument("--temporal_gap", type=int, default=5, help="Temporal attention gap")
