@@ -742,7 +742,7 @@ class BasicTransformerBlock_(nn.Module):
                 norm_hidden_states = self.pos_embed(norm_hidden_states)
 
             if enable_sequence_parallel():
-                norm_hidden_states = self.dynamic_switch(norm_hidden_states, temporal_to_spatial=True)
+                norm_hidden_states = self.dynamic_switch(norm_hidden_states, to_spatial_shard=True)
 
             attn_output = self.attn1(
                 norm_hidden_states,
@@ -752,7 +752,7 @@ class BasicTransformerBlock_(nn.Module):
             )
 
             if enable_sequence_parallel():
-                attn_output = self.dynamic_switch(attn_output, temporal_to_spatial=False)
+                attn_output = self.dynamic_switch(attn_output, to_spatial_shard=False)
 
             if self.use_ada_layer_norm_zero:
                 attn_output = gate_msa.unsqueeze(1) * attn_output
@@ -833,8 +833,8 @@ class BasicTransformerBlock_(nn.Module):
 
         return hidden_states
 
-    def dynamic_switch(self, x, temporal_to_spatial: bool):
-        if temporal_to_spatial:
+    def dynamic_switch(self, x, to_spatial_shard: bool):
+        if to_spatial_shard:
             scatter_dim, gather_dim = 0, 1
         else:
             scatter_dim, gather_dim = 1, 0

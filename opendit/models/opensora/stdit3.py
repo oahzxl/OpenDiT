@@ -122,12 +122,12 @@ class STDiT3Block(nn.Module):
             # attention
             if self.temporal:
                 if enable_sequence_parallel():
-                    x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=True)
+                    x_m, S, T = self.dynamic_switch(x_m, S, T, to_spatial_shard=True)
                 x_m = rearrange(x_m, "B (T S) C -> (B S) T C", T=T, S=S)
                 x_m = self.attn(x_m)
                 x_m = rearrange(x_m, "(B S) T C -> B (T S) C", T=T, S=S)
                 if enable_sequence_parallel():
-                    x_m, S, T = self.dynamic_switch(x_m, S, T, temporal_to_spatial=False)
+                    x_m, S, T = self.dynamic_switch(x_m, S, T, to_spatial_shard=False)
             else:
                 x_m = rearrange(x_m, "B (T S) C -> (B T) S C", T=T, S=S)
                 x_m = self.attn(x_m)
@@ -175,8 +175,8 @@ class STDiT3Block(nn.Module):
 
         return x
 
-    def dynamic_switch(self, x, s, t, temporal_to_spatial: bool):
-        if temporal_to_spatial:
+    def dynamic_switch(self, x, s, t, to_spatial_shard: bool):
+        if to_spatial_shard:
             scatter_dim, gather_dim = 2, 1
             new_s, new_t = s // get_sequence_parallel_size(), t * get_sequence_parallel_size()
         else:
