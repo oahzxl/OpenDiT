@@ -71,20 +71,20 @@ def preprocess_eval_videos(eval_videos, generated_video_shape):
             # Resize the video maintaining the aspect ratio
             resize_height = max(H_gen, int(H_gen * (H_eval / W_eval)))
             resize_width = max(W_gen, int(W_gen * (W_eval / H_eval)))
-            video = resize_video(video, resize_height, resize_width)
+            resized_video = resize_video(video, resize_height, resize_width)
             
             # Recalculate the dimensions
-            T_eval, C_eval, H_eval, W_eval = video.shape
-        
-        # Center crop
-        # BUG check whether center crop is correct
-        start_h = (H_eval - H_gen) // 2
-        start_w = (W_eval - W_gen) // 2
-        cropped_video = video[:T_gen, :, start_h:start_h + H_gen, start_w:start_w + W_gen]
-        
-        preprocessed_videos.append(cropped_video)
+            T_eval, C_eval, H_eval, W_eval = resized_video.shape
+
+            # Center crop
+            # BUG check whether center crop is correct
+            start_h = (H_eval - H_gen) // 2
+            start_w = (W_eval - W_gen) // 2
+            cropped_video = resized_video[:T_gen, :, start_h:start_h + H_gen, start_w:start_w + W_gen]
+            
+            preprocessed_videos.append(cropped_video)
     
-    return preprocessed_videos
+            return preprocessed_videos[0]
 
 
 
@@ -122,54 +122,19 @@ def main(args):
 
 
     generated_video_shape = generated_videos[0].shape
-    generated_videos = preprocess_eval_videos(eval_videos, generated_video_shape)
+    resized_video  = preprocess_eval_videos(eval_videos, generated_video_shape)
+
+    imageio.mimwrite(
+    "evaluations/fastvideodiffusion/samples/resize.mp4", resized_video.permute(0, 2, 3, 1), fps=8
+    )
+
+    # imageio.mimwrite(
+    # "evaluations/fastvideodiffusion/samples/origin.mp4", origin_video, fps=8
+    # )
 
 
-    eval_videos_tensor = torch.stack(eval_videos).to(device)
-    generated_videos_tensor = torch.stack(generated_videos).to(device)
 
 
-    print(f"Loaded {len(eval_videos)} evaluation videos | {len(generated_videos)} generated videos")
-    
-    if args.calculate_lpips:
-        result = calculate_lpips(eval_videos_tensor, generated_videos_tensor, device=device)
-        
-        print("LPIPS results:")
-        print(json.dumps(result, indent=4))
-        
-        output_file = os.path.join(args.generated_video_dir, 'lpips_results.json')
-        with open(output_file, 'w') as f:
-            json.dump(result, f, indent=4)
-
-    elif args.calculate_psnr:
-        result = calculate_psnr(eval_videos_tensor, generated_videos_tensor)
-        
-        print("PSNR results:")
-        print(json.dumps(result, indent=4))
-        
-        output_file = os.path.join(args.generated_video_dir, 'psnr_results.json')
-        with open(output_file, 'w') as f:
-            json.dump(result, f, indent=4)
-
-    elif args.calculate_ssim:
-        result = calculate_ssim(eval_videos_tensor, generated_videos_tensor)
-        
-        print("SSIM results:")
-        print(json.dumps(result, indent=4))
-        
-        output_file = os.path.join(args.generated_video_dir, 'ssim_results.json')
-        with open(output_file, 'w') as f:
-            json.dump(result, f, indent=4)
-
-    elif args.calculate_fvd:
-        result = calculate_fvd(eval_videos_tensor, generated_videos_tensor, device=device, method=args.eval_method)
-        
-        print(f"FVD results with {args.eval_method}:")
-        print(json.dumps(result, indent=4))
-        
-        output_file = os.path.join(args.generated_video_dir, 'fvd_results.json')
-        with open(output_file, 'w') as f:
-            json.dump(result, f, indent=4)
 
 
 if __name__ == "__main__":
