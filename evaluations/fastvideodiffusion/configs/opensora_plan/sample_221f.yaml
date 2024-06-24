@@ -21,5 +21,3 @@ enable_tiling: True
 eval: True
 eval_dataset: ./evaluations/fastvideodiffusion/datasets/webvid_selected.csv
 save_img_path: "./evaluations/fastvideodiffusion/samples/opensora_plan/sample_221f/"
-
-

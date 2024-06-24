@@ -31,11 +31,11 @@ from omegaconf import OmegaConf
 from torchvision.utils import save_image
 from transformers import T5EncoderModel, T5Tokenizer
 
+from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
 from opendit.core.parallel_mgr import set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.opensora_plan import LatteT2V, VideoGenPipeline, ae_stride_config, getae_wrapper
 from opendit.utils.utils import merge_args, set_seed
-from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
 
 
 def save_video_grid(video, nrow=None):
@@ -65,14 +65,12 @@ def main(args):
 
     # == init distributed env ==
     if os.environ.get("LOCAL_RANK", None) is None:
-        enable_sequence_parallelism = True
         os.environ["RANK"] = "0"
         os.environ["LOCAL_RANK"] = "0"
         os.environ["WORLD_SIZE"] = "1"
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = "29500"
-        
-            
+
     colossalai.launch_from_torch({})
     coordinator = DistCoordinator()
     set_parallel_manager(1, coordinator.world_size)
@@ -155,7 +153,7 @@ def main(args):
     video_grids = []
     # == load eval prompts ==
     eval_prompts_dict = load_eval_prompts(args.eval_dataset)
-    print('Generate eval datasets now!')
+    print("Generate eval datasets now!")
     print(f"Number of eval prompts: {len(eval_prompts_dict)}\n")
 
     # for idx, prompt in enumerate(args.text_prompt):
@@ -269,8 +267,10 @@ if __name__ == "__main__":
 
     # eval
     parser.add_argument("--eval", action="store_true")
-    parser.add_argument("--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv")
-    
+    parser.add_argument(
+        "--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv"
+    )
+
     args = parser.parse_args()
     config_args = OmegaConf.load(args.config)
     args = merge_args(args, config_args)
