@@ -39,7 +39,7 @@ def load_video(video_path):
     frames = []
     for frame in reader:
         # Convert the frame to a tensor and permute the dimensions to match (C, H, W)
-        frame_tensor = torch.tensor(frame).permute(2, 0, 1)
+        frame_tensor = torch.tensor(frame).cuda().permute(2, 0, 1)
         frames.append(frame_tensor)
 
     # Stack the list of tensors into a single tensor with shape (T, C, H, W)
@@ -94,7 +94,7 @@ def main(args):
 
     print(f"Find {len(video_ids)} videos")
     prompt_interval = 1
-    batch_size = 128
+    batch_size = 16
 
     lpips_results = []
     psnr_results = []
@@ -116,8 +116,8 @@ def main(args):
             eval_video = load_video(os.path.join(eval_video_dir, f"{video_id}.{file_extension}"))
             eval_video = preprocess_eval_video(eval_video, generated_video.shape)
             eval_videos_tensor.append(eval_video)
-        eval_videos_tensor = torch.stack(eval_videos_tensor)
-        generated_videos_tensor = torch.stack(generated_videos_tensor)
+        eval_videos_tensor = (torch.stack(eval_videos_tensor) / 255.0).cpu()
+        generated_videos_tensor = (torch.stack(generated_videos_tensor) / 255.0).cpu()
 
         if args.calculate_lpips:
             result = calculate_lpips(eval_videos_tensor, generated_videos_tensor, device=device)
@@ -145,17 +145,13 @@ def main(args):
 
         if (idx + 1) % prompt_interval == 0:
             out_str = ""
-            for results, name in zip(
-                [lpips_results, psnr_results, ssim_results, fvd_results], ["lpips", "psnr", "ssim", "fvd"]
-            ):
+            for results, name in zip([lpips_results, psnr_results, ssim_results], ["lpips", "psnr", "ssim"]):
                 result = sum(results) / len(results)
                 out_str += f"{name}: {result:.4f}, "
             print(f"Processed {idx + 1} videos. {out_str[:-2]}")
 
     out_str = ""
-    for results, name in zip(
-        [lpips_results, psnr_results, ssim_results, fvd_results], ["lpips", "psnr", "ssim", "fvd"]
-    ):
+    for results, name in zip([lpips_results, psnr_results, ssim_results], ["lpips", "psnr", "ssim"]):
         result = sum(results) / len(results)
         out_str += f"{name}: {result:.4f}, "
     print(f"Processed all videos. {out_str[:-2]}")

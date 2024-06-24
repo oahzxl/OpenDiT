@@ -18,14 +18,14 @@ flash_attn: True
 
 # fvd
 spatial_skip: True
-spatial_threshold: [540, 920]  # 20/30
+spatial_threshold: [540, 920]
 spatial_gap: 2
 spatial_block: [0, 28]
 temporal_skip: True
-temporal_threshold: [540, 960]  # 24/30
+temporal_threshold: [540, 920]
 temporal_gap: 4
 cross_skip: True
-cross_threshold: [540, 960]  # 24/30
+cross_threshold: [540, 920]
 cross_gap: 6
 # diffusion_skip: True
 # diffusion_skip_timestep: [1,1,1,0,0,0,0,0,0,0]

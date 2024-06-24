@@ -31,7 +31,7 @@ from omegaconf import OmegaConf
 from torchvision.utils import save_image
 from transformers import T5EncoderModel, T5Tokenizer
 
-from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
+from evaluations.fastvideodiffusion.scripts.utils import load_eval_prompts
 from opendit.core.parallel_mgr import set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.opensora_plan import LatteT2V, VideoGenPipeline, ae_stride_config, getae_wrapper
@@ -150,7 +150,6 @@ def main(args):
 
     os.makedirs(args.save_img_path, exist_ok=True)
 
-    video_grids = []
     # == load eval prompts ==
     eval_prompts_dict = load_eval_prompts(args.eval_dataset)
     print("Generate eval datasets now!")
@@ -188,32 +187,6 @@ def main(args):
         except:
             print("Error when saving {}".format(prompt))
         print(f"Finish processing {id} prompt {num_prompt + 1}/{len(eval_prompts_dict)}\n")
-
-        video_grids.append(videos)
-    video_grids = torch.cat(video_grids, dim=0)
-
-    # torchvision.io.write_video(args.save_img_path + '_%04d' % args.run_time + '-.mp4', video_grids, fps=6)
-    if coordinator.is_master():
-        if args.force_images:
-            save_image(
-                video_grids / 255.0,
-                os.path.join(
-                    args.save_img_path, f"{args.sample_method}_gs{args.guidance_scale}_s{args.num_sampling_steps}.{ext}"
-                ),
-                nrow=math.ceil(math.sqrt(len(video_grids))),
-                normalize=True,
-                value_range=(0, 1),
-            )
-        else:
-            video_grids = save_video_grid(video_grids)
-            imageio.mimwrite(
-                os.path.join(
-                    args.save_img_path, f"{args.sample_method}_gs{args.guidance_scale}_s{args.num_sampling_steps}.{ext}"
-                ),
-                video_grids,
-                fps=args.fps,
-                quality=9,
-            )
 
     print("save path {}".format(args.save_img_path))
 
