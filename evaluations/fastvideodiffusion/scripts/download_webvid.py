@@ -61,7 +61,6 @@ def download_video(data, save_path):
 
 
 if __name__ == "__main__":
-    # data = read_csv('./datasets/webvid.csv')
     data = read_csv("./datasets/webvid.csv")
     selected_data = select_csv(data, 15, 5, 500)
     save_data_list(selected_data, "./datasets/webvid_selected.csv")

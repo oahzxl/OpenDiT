@@ -31,7 +31,7 @@ from omegaconf import OmegaConf
 from torchvision.utils import save_image
 from transformers import T5EncoderModel, T5Tokenizer
 
-from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
+from evaluations.fastvideodiffusion.scripts.utils import load_eval_prompts
 from opendit.core.parallel_mgr import set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.latte import LattePipeline, LatteT2V
@@ -45,13 +45,6 @@ def main(args):
     torch.backends.cudnn.allow_tf32 = True
 
     # == init distributed env ==
-    if os.environ.get("LOCAL_RANK", None) is None:  # BUG
-        os.environ["RANK"] = "0"
-        os.environ["LOCAL_RANK"] = "0"
-        os.environ["WORLD_SIZE"] = "1"
-        os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = "29500"
-
     colossalai.launch_from_torch({})
     coordinator = DistCoordinator()
     set_parallel_manager(1, coordinator.world_size)
@@ -192,8 +185,7 @@ def main(args):
         vae=vae, text_encoder=text_encoder, tokenizer=tokenizer, scheduler=scheduler, transformer=transformer_model
     ).to(device)
 
-    if not os.path.exists(args.save_img_path):
-        os.makedirs(args.save_img_path)
+    os.makedirs(args.save_img_path, exist_ok=True)
 
     eval_prompts_dict = load_eval_prompts(args.eval_dataset)
     print("Generate eval datasets now!")
@@ -246,7 +238,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_sampling_steps", type=int, default=50)
     parser.add_argument("--enable_temporal_attentions", action="store_true")
     parser.add_argument("--enable_vae_temporal_decoder", action="store_true")
-    parser.add_argument("--text_prompt", nargs="+")
+
     # fvd
     parser.add_argument("--spatial_skip", action="store_true", help="Enable spatial attention skip")
     parser.add_argument(

@@ -19,7 +19,7 @@ from colossalai.cluster import DistCoordinator
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
+from evaluations.fastvideodiffusion.scripts.utils import load_eval_prompts
 from opendit.core.parallel_mgr import enable_sequence_parallel, set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.opensora import RFLOW, OpenSoraVAE_V1_2, STDiT3_XL_2, T5Encoder, text_preprocessing
@@ -39,7 +39,7 @@ from opendit.models.opensora.inference_utils import (
     refine_prompts_by_openai,
     split_prompt,
 )
-from opendit.utils.utils import all_exists, create_logger, merge_args, set_seed, str_to_dtype
+from opendit.utils.utils import create_logger, merge_args, set_seed, str_to_dtype
 
 
 def main(args):
@@ -167,7 +167,6 @@ def main(args):
 
     save_dir = args.save_dir
     os.makedirs(save_dir, exist_ok=True)
-    prompt_as_path = args.prompt_as_path
 
     # == Iter over all samples ==
     ids, eval_prompts = zip(*eval_prompts_dict.items())
@@ -204,11 +203,6 @@ def main(args):
                 )
                 for idx in range(len(batch_prompts))
             ]
-
-            # NOTE: Skip if the sample already exists
-            # This is useful for resuming sampling VBench
-            if prompt_as_path and all_exists(save_paths):
-                continue
 
             # == process prompts step by step ==
             # 0. split prompt
@@ -341,12 +335,10 @@ if __name__ == "__main__":
     # output
     parser.add_argument("--save-dir", default="./samples/opensora", type=str, help="path to save generated samples")
     parser.add_argument("--num-sample", default=1, type=int, help="number of samples to generate for one prompt")
-    parser.add_argument("--prompt-as-path", action="store_true", help="use prompt as path to save samples")
     parser.add_argument("--verbose", default=2, type=int, help="verbose level")
 
     # prompt
     parser.add_argument("--prompt-path", default=None, type=str, help="path to prompt txt file")
-    parser.add_argument("--prompt", default=None, type=str, nargs="+", help="prompt list")
     parser.add_argument("--llm-refine", action="store_true", help="enable LLM refine")
 
     # image/video

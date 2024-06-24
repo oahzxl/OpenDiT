@@ -4,5 +4,3 @@ wget https://huggingface.co/datasets/TempoFunk/webvid-10M/resolve/main/data/val/
 
 # Download video files
 python download_webvid.py
-
-cp -r common_metrics_on_video_quality eval
