@@ -94,7 +94,7 @@ def main(args):
 
     print(f"Find {len(video_ids)} videos")
     prompt_interval = 1
-    batch_size = 32
+    batch_size = 128
 
     lpips_results = []
     psnr_results = []
