@@ -1,6 +1,5 @@
 import argparse
 import importlib
-import json
 import os
 import sys
 
@@ -95,13 +94,14 @@ def main(args):
         raise ValueError("No videos found in the generated video dataset. Exiting.")
 
     print(f"Find {len(video_ids)} videos")
+    prompt_interval = 20
 
     lpips_results = []
     psnr_results = []
     ssim_results = []
     fvd_results = []
 
-    for video_id in tqdm.tqdm(video_ids):
+    for idx, video_id in enumerate(tqdm.tqdm(video_ids)):
         eval_video = load_video(os.path.join(eval_video_dir, f"{video_id}.{file_extension}"))
         generated_video = load_video(os.path.join(generated_video_dir, f"{video_id}.{file_extension}"))
         eval_video = preprocess_eval_video(eval_video, generated_video.shape)
@@ -132,10 +132,22 @@ def main(args):
             result = sum(result) / len(result)
             fvd_results.append(result)
 
-    for name in ["lpips", "psnr", "ssim", "fvd"]:
-        output_file = os.path.join(args.generated_video_dir, f"{name}.json")
-        with open(output_file, "w") as f:
-            json.dump(result, f, indent=4)
+        if (idx + 1) % prompt_interval == 0:
+            out_str = ""
+            for results, name in zip(
+                [lpips_results, psnr_results, ssim_results, fvd_results], ["lpips", "psnr", "ssim", "fvd"]
+            ):
+                result = sum(results) / len(results)
+                out_str += f"{name}: {result:.4f}, "
+            print(f"Processed {idx + 1} videos. {out_str[:-2]}")
+
+    out_str = ""
+    for results, name in zip(
+        [lpips_results, psnr_results, ssim_results, fvd_results], ["lpips", "psnr", "ssim", "fvd"]
+    ):
+        result = sum(results) / len(results)
+        out_str += f"{name}: {result:.4f}, "
+    print(f"Processed all videos. {out_str[:-2]}")
 
 
 if __name__ == "__main__":
@@ -146,7 +158,7 @@ if __name__ == "__main__":
     parser.add_argument("--calculate_psnr", action="store_true")
     parser.add_argument("--calculate_ssim", action="store_true")
 
-    parser.add_argument("--eval_method", type=str, default="videogpt")
+    parser.add_argument("--eval_method", type=str, default="stylegan")
 
     # dataset
     parser.add_argument(
