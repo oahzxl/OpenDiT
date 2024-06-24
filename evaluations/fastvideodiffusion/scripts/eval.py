@@ -80,8 +80,7 @@ def preprocess_eval_video(eval_video, generated_video_shape):
 
 
 def main(args):
-    device = torch.device(f"cuda:{args.device}")
-
+    device = "cuda"
     eval_video_dir = args.eval_video_dir
     generated_video_dir = args.generated_video_dir
 
@@ -94,19 +93,31 @@ def main(args):
         raise ValueError("No videos found in the generated video dataset. Exiting.")
 
     print(f"Find {len(video_ids)} videos")
-    prompt_interval = 20
+    prompt_interval = 1
+    batch_size = 32
 
     lpips_results = []
     psnr_results = []
     ssim_results = []
     fvd_results = []
 
-    for idx, video_id in enumerate(tqdm.tqdm(video_ids)):
-        eval_video = load_video(os.path.join(eval_video_dir, f"{video_id}.{file_extension}"))
-        generated_video = load_video(os.path.join(generated_video_dir, f"{video_id}.{file_extension}"))
-        eval_video = preprocess_eval_video(eval_video, generated_video.shape)
-        eval_videos_tensor = eval_video.unsqueeze(0)
-        generated_videos_tensor = generated_video.unsqueeze(0)
+    total_len = len(video_ids) // batch_size + (1 if len(video_ids) % batch_size != 0 else 0)
+
+    for idx, video_id in enumerate(tqdm.tqdm(range(total_len))):
+        eval_videos_tensor = []
+        generated_videos_tensor = []
+        for i in range(batch_size):
+            video_idx = idx * batch_size + i
+            if video_idx >= len(video_ids):
+                break
+            video_id = video_ids[video_idx]
+            generated_video = load_video(os.path.join(generated_video_dir, f"{video_id}.{file_extension}"))
+            generated_videos_tensor.append(generated_video)
+            eval_video = load_video(os.path.join(eval_video_dir, f"{video_id}.{file_extension}"))
+            eval_video = preprocess_eval_video(eval_video, generated_video.shape)
+            eval_videos_tensor.append(eval_video)
+        eval_videos_tensor = torch.stack(eval_videos_tensor)
+        generated_videos_tensor = torch.stack(generated_videos_tensor)
 
         if args.calculate_lpips:
             result = calculate_lpips(eval_videos_tensor, generated_videos_tensor, device=device)
@@ -157,8 +168,7 @@ if __name__ == "__main__":
     parser.add_argument("--calculate_lpips", action="store_true")
     parser.add_argument("--calculate_psnr", action="store_true")
     parser.add_argument("--calculate_ssim", action="store_true")
-
-    parser.add_argument("--eval_method", type=str, default="stylegan")
+    parser.add_argument("--eval_method", type=str, default="videogpt")
 
     # dataset
     parser.add_argument(
@@ -168,8 +178,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--generated_video_dir", type=str, default="./evaluations/fastvideodiffusion/samples/latte/sample_skip"
     )
-
-    parser.add_argument("--device", type=str, default="0")
 
     args = parser.parse_args()
 
