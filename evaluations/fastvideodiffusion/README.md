@@ -8,7 +8,7 @@ You can easily calculate the following video quality metrics:
 - **PSNR**: peak-signal-to-noise ratio
 
 As for FVD
- 1. The codebase refers to [MVCD](https://github.com/voletiv/mcvd-pytorch) and other websites and projects, I've just extracted the part of it that's relevant to the calculation. This code can be used to evaluate FVD scores for generative or predictive models. 
+ 1. The codebase refers to [MVCD](https://github.com/voletiv/mcvd-pytorch) and other websites and projects, I've just extracted the part of it that's relevant to the calculation. This code can be used to evaluate FVD scores for generative or predictive models.
  2. Now **we have supported 2 pytorch-based FVD implementations** ([videogpt](https://github.com/wilson1yan/VideoGPT) and [styleganv](https://github.com/universome/stylegan-v), see issue [#4](https://github.com/JunyaoHu/common_metrics_on_video_quality/issues/4)). Their calculations are almost identical, and the difference is negligible.
  3. FVD calculates the feature distance between two sets of videos. (the I3D features of each video are do not go through the softmax() function, and the size of the last dimension is 400, not 1024)
 
@@ -50,8 +50,8 @@ print(json.dumps(result, indent=4))
 ```
 
 It means we calculate:
-    
-- `FVD-frames[:10]`, `FVD-frames[:11]`, ..., `FVD-frames[:30]` 
+
+- `FVD-frames[:10]`, `FVD-frames[:11]`, ..., `FVD-frames[:30]`
 - `avg-PSNR/SSIM/LPIPS-frame[0]`, `avg-PSNR/SSIM/LPIPS-frame[1]`, ..., `avg-PSNR/SSIM/LPIPS-frame[:30]`, and their std.
 
 We cannot calculate `FVD-frames[:8]`, and it will pass when calculating, see ps.6.
@@ -166,8 +166,8 @@ The result shows: a all-zero matrix and a all-one matrix, their FVD-30 (FVD[:30]
 
 1. You should `pip install lpips` first.
 3. Make sure the pixel value of videos should be in [0, 1].
-2. If you have something wrong with downloading FVD pre-trained model, you should manually download any of the following and put it into FVD folder. 
-    - `i3d_torchscript.pt` from [here](https://www.dropbox.com/s/ge9e5ujwgetktms/i3d_torchscript.pt) 
+2. If you have something wrong with downloading FVD pre-trained model, you should manually download any of the following and put it into FVD folder.
+    - `i3d_torchscript.pt` from [here](https://www.dropbox.com/s/ge9e5ujwgetktms/i3d_torchscript.pt)
     - `i3d_pretrained_400.pt` from [here](https://onedrive.live.com/download?cid=78EEF3EB6AE7DBCB&resid=78EEF3EB6AE7DBCB%21199&authkey=AApKdFHPXzWLNyI)
 4. For grayscale videos, we multiply to 3 channels [as it says](https://github.com/richzhang/PerceptualSimilarity/issues/23#issuecomment-492368812).
 5. We average SSIM when images have 3 channels, ssim is the only metric extremely sensitive to gray being compared to b/w.

@@ -31,11 +31,12 @@ from omegaconf import OmegaConf
 from torchvision.utils import save_image
 from transformers import T5EncoderModel, T5Tokenizer
 
+from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
 from opendit.core.parallel_mgr import set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.latte import LattePipeline, LatteT2V
 from opendit.utils.utils import merge_args, set_seed
-from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
+
 
 def main(args):
     set_seed(args.seed)
@@ -44,14 +45,13 @@ def main(args):
     torch.backends.cudnn.allow_tf32 = True
 
     # == init distributed env ==
-    if os.environ.get("LOCAL_RANK", None) is None: # BUG
-        enable_sequence_parallelism = True
+    if os.environ.get("LOCAL_RANK", None) is None:  # BUG
         os.environ["RANK"] = "0"
         os.environ["LOCAL_RANK"] = "0"
         os.environ["WORLD_SIZE"] = "1"
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = "29500"
-        
+
     colossalai.launch_from_torch({})
     coordinator = DistCoordinator()
     set_parallel_manager(1, coordinator.world_size)
@@ -194,9 +194,9 @@ def main(args):
 
     if not os.path.exists(args.save_img_path):
         os.makedirs(args.save_img_path)
-        
+
     eval_prompts_dict = load_eval_prompts(args.eval_dataset)
-    print('Generate eval datasets now!')
+    print("Generate eval datasets now!")
     print(f"Number of eval prompts: {len(eval_prompts_dict)}\n")
     # video_grids = []
     for num_prompt, (id, prompt) in enumerate(eval_prompts_dict.items()):
@@ -216,17 +216,15 @@ def main(args):
         if videos.shape[1] == 1:
             save_image(videos[0][0], args.save_img_path + prompt.replace(" ", "_") + ".png")
         else:
-            save_path = args.save_img_path + f'{id}' + ".mp4" # TODO edit save path
-            imageio.mimwrite(
-                save_path, videos[0], fps=8
-            )
+            save_path = args.save_img_path + f"{id}" + ".mp4"  # TODO edit save path
+            imageio.mimwrite(save_path, videos[0], fps=8)
             print(f"Saved eval video to {save_path}!\n")
         print(f"Finish processing prompt {num_prompt + 1}/{len(eval_prompts_dict)}\n")
-        
-    print('Finish generating eval datasets now!')
+
+    print("Finish generating eval datasets now!")
     print(f"Number of eval videos: {len(eval_prompts_dict)}\n")
-    
-    
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
@@ -249,7 +247,7 @@ if __name__ == "__main__":
     parser.add_argument("--enable_temporal_attentions", action="store_true")
     parser.add_argument("--enable_vae_temporal_decoder", action="store_true")
     parser.add_argument("--text_prompt", nargs="+")
-# fvd
+    # fvd
     parser.add_argument("--spatial_skip", action="store_true", help="Enable spatial attention skip")
     parser.add_argument(
         "--spatial_threshold", type=int, nargs=2, default=[100, 800], help="Spatial attention threshold"
@@ -269,11 +267,13 @@ if __name__ == "__main__":
         action="store_true",
     )
     parser.add_argument("--diffusion_skip_timestep", nargs="+")
-    
+
     # eval
     parser.add_argument("--eval", action="store_true")
-    parser.add_argument("--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv")
-    
+    parser.add_argument(
+        "--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv"
+    )
+
     args = parser.parse_args()
 
     config_args = OmegaConf.load(args.config)

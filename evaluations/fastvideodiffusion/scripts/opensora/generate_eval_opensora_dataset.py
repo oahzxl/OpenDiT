@@ -19,6 +19,7 @@ from colossalai.cluster import DistCoordinator
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
+from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
 from opendit.core.parallel_mgr import enable_sequence_parallel, set_parallel_manager
 from opendit.core.skip_mgr import set_skip_manager
 from opendit.models.opensora import RFLOW, OpenSoraVAE_V1_2, STDiT3_XL_2, T5Encoder, text_preprocessing
@@ -33,14 +34,12 @@ from opendit.models.opensora.inference_utils import (
     extract_json_from_prompts,
     extract_prompts_loop,
     get_eval_save_path_name,
-    load_prompts,
     merge_prompt,
     prepare_multi_resolution_info,
     refine_prompts_by_openai,
     split_prompt,
 )
 from opendit.utils.utils import all_exists, create_logger, merge_args, set_seed, str_to_dtype
-from evaluations.fastvideodiffusion.eval.utils import load_eval_prompts
 
 
 def main(args):
@@ -61,7 +60,7 @@ def main(args):
         os.environ["WORLD_SIZE"] = "1"
         os.environ["MASTER_ADDR"] = "127.0.0.1"
         os.environ["MASTER_PORT"] = "29500"
-        
+
     colossalai.launch_from_torch({})
     coordinator = DistCoordinator()
     set_parallel_manager(1, coordinator.world_size)
@@ -146,9 +145,8 @@ def main(args):
     # ======================================================
     # == load eval prompts ==
     eval_prompts_dict = load_eval_prompts(args.eval_dataset)
-    print('Generate eval datasets now!')
+    print("Generate eval datasets now!")
     print(f"Number of eval prompts: {len(eval_prompts_dict)}\n")
-
 
     # == prepare reference ==
     reference_path = args.reference_path if args.reference_path is not None else [""] * len(eval_prompts_dict)
@@ -178,13 +176,12 @@ def main(args):
         # == prepare batch prompts ==
         batch_prompts = eval_prompts[i : i + batch_size]
         batch_ids = ids[i : i + batch_size]
-        
+
         ms = mask_strategy[i : i + batch_size]
         refs = reference_path[i : i + batch_size]
 
         # == get json from prompts ==
         batch_prompts, refs, ms = extract_json_from_prompts(batch_prompts, refs, ms)
-        original_batch_prompts = batch_prompts
 
         # == get reference for condition ==
         refs = collect_references_batch(refs, vae, image_size)
@@ -279,7 +276,7 @@ def main(args):
                 batch_prompts.append(merge_prompt(prompt_segment_list, loop_idx_list))
 
             # == Iter over loop generation ==
-            video_clips = [] # BUG batch_prompts
+            video_clips = []  # BUG batch_prompts
             for loop_i in range(loop):
                 # == get prompt for loop i ==
                 batch_prompts_loop = extract_prompts_loop(batch_prompts, loop_i)
@@ -289,7 +286,7 @@ def main(args):
                     refs, ms = append_generated(
                         vae, video_clips[-1], refs, ms, loop_i, condition_frame_length, condition_frame_edit
                     )
-                # == sampling == 
+                # == sampling ==
                 z = torch.randn(len(batch_prompts), vae.out_channels, *latent_size, device=device, dtype=dtype)
                 masks = apply_mask_strategy(z, refs, ms, loop_i, align=align)
                 samples = scheduler.sample(
@@ -400,9 +397,10 @@ if __name__ == "__main__":
 
     # eval
     parser.add_argument("--eval", action="store_true")
-    parser.add_argument("--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv")
-    
-    
+    parser.add_argument(
+        "--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv"
+    )
+
     args = parser.parse_args()
 
     config_args = OmegaConf.load(args.config)
