@@ -88,6 +88,7 @@ Inference tips: 1) EMA model requires quite long time to converge and produce me
 
 You can perform low-latency video inference using our Dynamic Sequence Parallel (DSP) as follows.
 
+TODO edit here
 ```shell
 torchrun --standalone --nproc_per_node=8 scripts/opensora/sample_opensora.py \
     --model_time_scale 1 \
