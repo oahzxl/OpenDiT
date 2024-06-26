@@ -114,7 +114,6 @@ def main(args):
             generated_video = load_video(os.path.join(generated_video_dir, f"{video_id}.{file_extension}"))
             generated_videos_tensor.append(generated_video)
             eval_video = load_video(os.path.join(eval_video_dir, f"{video_id}.{file_extension}"))
-            eval_video = preprocess_eval_video(eval_video, generated_video.shape)
             eval_videos_tensor.append(eval_video)
         eval_videos_tensor = (torch.stack(eval_videos_tensor) / 255.0).cpu()
         generated_videos_tensor = (torch.stack(generated_videos_tensor) / 255.0).cpu()
@@ -167,9 +166,6 @@ if __name__ == "__main__":
     parser.add_argument("--eval_method", type=str, default="videogpt")
 
     # dataset
-    parser.add_argument(
-        "--eval_dataset", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid_selected.csv"
-    )
     parser.add_argument("--eval_video_dir", type=str, default="./evaluations/fastvideodiffusion/datasets/webvid")
     parser.add_argument(
         "--generated_video_dir", type=str, default="./evaluations/fastvideodiffusion/samples/latte/sample_skip"
